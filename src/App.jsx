@@ -49,6 +49,7 @@ const FONT_STYLE = `
   .sb-scroll::-webkit-scrollbar { display:none; }
   .sb-scroll { -ms-overflow-style:none; scrollbar-width:none; }
   .sb-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .sb-onboard-screen { height: 100vh; height: 100dvh; overflow-y: auto; }
   div, span, p, a { min-width: 0; }
   @keyframes sbFadeUp { from { opacity:0; transform: translateY(8px);} to {opacity:1; transform:translateY(0);} }
   @keyframes sbPop { from { opacity:0; transform: scale(0.96);} to {opacity:1; transform:scale(1);} }
@@ -613,7 +614,7 @@ function Card({ children, style, onClick, hover = true, className = "" }) {
 
 function Button({ children, onClick, variant = "primary", size = "md", style, disabled, type = "button", full }) {
   const [pressed, setPressed] = useState(false);
-  const sizes = { sm: { pad: "8px 14px", fs: 13 }, md: { pad: "11px 18px", fs: 14.5 }, lg: { pad: "14px 22px", fs: 15.5 } };
+  const sizes = { sm: { pad: "13px 14px", fs: 13.5 }, md: { pad: "17px 18px", fs: 15 }, lg: { pad: "20px 22px", fs: 16.5 } };
   const variants = {
     primary: { background: COLORS.ink, color: "#fff", border: "none" },
     secondary: { background: COLORS.cardAlt, color: COLORS.ink, border: `1px solid ${COLORS.line}` },
@@ -785,14 +786,14 @@ function Onboarding({ onComplete }) {
   const toggle = (arr, setArr, id) => setArr(arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
 
   const wrap = (content, footer) => (
-    <div className="sb-fade-up" style={{
-      minHeight: "100vh", display: "flex", flexDirection: "column", background: COLORS.bg,
+    <div className="sb-fade-up sb-onboard-screen" style={{
+      display: "flex", flexDirection: "column", background: COLORS.bg,
       maxWidth: 480, margin: "0 auto", padding: "0 24px", boxSizing: "border-box",
     }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", paddingTop: 40, paddingBottom: 20 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", paddingTop: 24, paddingBottom: 16, minHeight: 0 }}>
         {content}
       </div>
-      <div style={{ paddingBottom: 36 }}>{footer}</div>
+      <div style={{ paddingBottom: 28, flexShrink: 0 }}>{footer}</div>
     </div>
   );
 
