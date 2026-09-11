@@ -614,7 +614,11 @@ function Card({ children, style, onClick, hover = true, className = "" }) {
 
 function Button({ children, onClick, variant = "primary", size = "md", style, disabled, type = "button", full }) {
   const [pressed, setPressed] = useState(false);
-  const sizes = { sm: { pad: "13px 14px", fs: 13.5 }, md: { pad: "17px 18px", fs: 15 }, lg: { pad: "20px 22px", fs: 16.5 } };
+  const sizes = {
+    sm: { padding: "14px 16px", fontSize: 14, minHeight: 46 },
+    md: { padding: "19px 20px", fontSize: 16, minHeight: 56 },
+    lg: { padding: "23px 24px", fontSize: 17.5, minHeight: 64 },
+  };
   const variants = {
     primary: { background: COLORS.ink, color: "#fff", border: "none" },
     secondary: { background: COLORS.cardAlt, color: COLORS.ink, border: `1px solid ${COLORS.line}` },
