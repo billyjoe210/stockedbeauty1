@@ -42,11 +42,14 @@ const CARD_GRADIENT = `linear-gradient(180deg, #FFFFFF 0%, ${COLORS.tint} 100%)`
 
 const FONT_STYLE = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-  .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background:${COLORS.bg}; color:${COLORS.ink}; letter-spacing: -0.01em; }
+  html, body { overflow-x: hidden; max-width: 100vw; }
+  .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background:${COLORS.bg}; color:${COLORS.ink}; letter-spacing: -0.01em; overflow-x: hidden; max-width: 100vw; }
   .sb-display { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
   .sb-numeral { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; font-variant-numeric: lining-nums; }
   .sb-scroll::-webkit-scrollbar { display:none; }
   .sb-scroll { -ms-overflow-style:none; scrollbar-width:none; }
+  .sb-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  div, span, p, a { min-width: 0; }
   @keyframes sbFadeUp { from { opacity:0; transform: translateY(8px);} to {opacity:1; transform:translateY(0);} }
   @keyframes sbPop { from { opacity:0; transform: scale(0.96);} to {opacity:1; transform:scale(1);} }
   .sb-fade-up { animation: sbFadeUp 0.45s ease both; }
@@ -151,6 +154,19 @@ const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 /* ============================================================================
    DEMO DATA
 ============================================================================ */
+
+function buildEmptyData(professionIds = ["lash"]) {
+  return {
+    suppliers: [],
+    inventory: [],
+    services: [],
+    serviceLogs: [],
+    transactions: [],
+    wasteLogs: [],
+    reorderList: [],
+    categories: categoriesForProfessions(professionIds),
+  };
+}
 
 function buildDemoData(professionIds = ["lash"]) {
   const suppliers = [
@@ -674,14 +690,16 @@ function Modal({ open, onClose, title, children, width = 520 }) {
       style={{
         position: "fixed", inset: 0, background: "rgba(42,36,31,0.4)", zIndex: 100,
         display: "flex", alignItems: "flex-end", justifyContent: "center", backdropFilter: "blur(2px)",
+        overflow: "hidden",
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className="sb-pop sb-scroll"
         style={{
-          background: CARD_GRADIENT, width: "100%", maxWidth: width, maxHeight: "92vh", overflowY: "auto",
+          background: CARD_GRADIENT, width: "100%", maxWidth: width, maxHeight: "92vh", overflowY: "auto", overflowX: "hidden",
           borderRadius: "30px 30px 0 0", padding: "24px 20px 30px", boxSizing: "border-box",
+          position: "relative", left: 0, right: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
@@ -806,7 +824,7 @@ function Onboarding({ onComplete }) {
       <div>
         <div className="sb-display" style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>What kind of beauty professional are you?</div>
         <div style={{ fontSize: 14, color: COLORS.inkSoft, marginBottom: 24 }}>Select all that apply — we'll tailor your categories.</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
           {PROFESSIONS.map((p) => {
             const active = profession.includes(p.id);
             return (
@@ -895,6 +913,7 @@ export default function App() {
   const [view, setView] = useState("home");
   const [toast, setToast] = useState("");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [quickAction, setQuickAction] = useState(null); // null | "menu" | "log" | "inventory" | "service" | "waste"
   const saveTimer = useRef(null);
 
   // load
@@ -931,7 +950,7 @@ export default function App() {
 
   const completeOnboarding = (p) => {
     setProfile((prev) => ({ ...prev, ...p }));
-    setData(buildDemoData(p.profession));
+    setData(buildEmptyData(p.profession));
     setOnboarded(true);
     setView("home");
   };
@@ -968,6 +987,77 @@ export default function App() {
         </div>
       </div>
       <BottomNav view={view} setView={setView} />
+      <GlobalFab onClick={() => setQuickAction("menu")} />
+
+      {quickAction === "menu" && (
+        <QuickActionSheet onClose={() => setQuickAction(null)} onPick={(action) => setQuickAction(action)} />
+      )}
+
+      {quickAction === "inventory" && (
+        <ItemFormModal
+          open item={null} categories={data.categories} suppliers={data.suppliers}
+          onClose={() => setQuickAction(null)}
+          onSave={(item) => {
+            setData((d) => ({ ...d, inventory: [...d.inventory, item] }));
+            setQuickAction(null);
+            showToast("Product added");
+          }}
+          onDelete={null}
+        />
+      )}
+
+      {quickAction === "service" && (
+        <ServiceFormModal
+          open service={null} inventory={data.inventory}
+          onClose={() => setQuickAction(null)}
+          onSave={(svc) => {
+            setData((d) => ({ ...d, services: [...d.services, svc] }));
+            setQuickAction(null);
+            showToast("Service created");
+          }}
+          onDelete={null}
+        />
+      )}
+
+      {quickAction === "log" && (
+        <LogServiceModal
+          open preset={{}} services={data.services} inventory={data.inventory}
+          onClose={() => setQuickAction(null)}
+          onComplete={(log, deductions) => {
+            setData((d) => ({
+              ...d,
+              serviceLogs: [...d.serviceLogs, log],
+              inventory: d.inventory.map((item) => {
+                const ded = deductions.find((x) => x.productId === item.id);
+                return ded ? { ...item, quantity: Math.max(0, item.quantity - ded.amount) } : item;
+              }),
+              transactions: [
+                ...deductions.map((ded) => ({ id: uid("txn"), productId: ded.productId, type: "Service Usage", quantity: -ded.amount, serviceId: log.serviceId, date: log.date })),
+                ...d.transactions,
+              ],
+            }));
+            setQuickAction(null);
+            showToast("Service logged — inventory updated");
+          }}
+        />
+      )}
+
+      {quickAction === "waste" && (
+        <RecordWasteModal
+          open inventory={data.inventory}
+          onClose={() => setQuickAction(null)}
+          onSave={(entry) => {
+            setData((d) => ({
+              ...d,
+              inventory: d.inventory.map((i) => (i.id === entry.productId ? { ...i, quantity: Math.max(0, i.quantity - entry.quantity) } : i)),
+              wasteLogs: [...d.wasteLogs, { id: uid("waste"), ...entry, date: new Date("2026-08-23T09:00:00").toISOString() }],
+            }));
+            setQuickAction(null);
+            showToast("Waste recorded");
+          }}
+        />
+      )}
+
       <Toast message={toast} onDone={() => setToast("")} />
     </div>
   );
@@ -1073,7 +1163,7 @@ function TopBar({ profile, view, onReset }) {
               <div onClick={() => { setOpen(false); onReset(); }} style={{
                 display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: COLORS.critical,
               }}>
-                <LogOut size={15} /> Reset demo data
+                <LogOut size={15} /> Log out
               </div>
             </div>
           )}
@@ -1212,7 +1302,7 @@ function HomeView({ data, setData, profile, setView, showToast }) {
               <Card key={log.id} style={{ padding: 16 }} hover={false}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 14.5 }}>{svc.name}</div>
+                    <div className="sb-truncate" style={{ fontWeight: 700, fontSize: 14.5 }}>{svc.name}</div>
                     <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 2 }}>{log.clientName || "Walk-in"} · {timeAgo(log.date)}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -1491,7 +1581,7 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
   return (
     <Modal open={open} onClose={onClose} title={item ? "Edit Product" : "Add Product"} width={560}>
       <Field label="Product Name"><Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. 11mm CC 0.05 Lash Tray" /></Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <Field label="Brand"><Input value={form.brand} onChange={(e) => set("brand", e.target.value)} placeholder="Brand" /></Field>
         <Field label="Category">
           <Select value={form.category} onChange={(e) => set("category", e.target.value)}>
@@ -1501,14 +1591,14 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
       </div>
 
       {isLashTray && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 12 }}>
           <Field label="Curl"><Select value={form.curl} onChange={(e) => set("curl", e.target.value)}><option value="">—</option>{CURLS.map((c) => <option key={c} value={c}>{c}</option>)}</Select></Field>
           <Field label="Diameter"><Select value={form.diameter} onChange={(e) => set("diameter", e.target.value)}><option value="">—</option>{DIAMETERS.map((c) => <option key={c} value={c}>{c}</option>)}</Select></Field>
           <Field label="Length"><Select value={form.length} onChange={(e) => set("length", e.target.value)}><option value="">—</option>{LENGTHS.map((c) => <option key={c} value={c}>{c}</option>)}</Select></Field>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 12 }}>
         <Field label="Quantity On Hand"><Input type="number" step="0.01" value={form.quantity} onChange={(e) => set("quantity", e.target.value)} /></Field>
         <Field label="Unit Type">
           <Select value={form.unitType} onChange={(e) => set("unitType", e.target.value)}>
@@ -1518,7 +1608,7 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
         <Field label="Reorder Threshold"><Input type="number" step="0.01" value={form.reorderThreshold} onChange={(e) => set("reorderThreshold", e.target.value)} /></Field>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <Field label="Purchase Price" hint="Price you paid for the pack/bottle"><Input type="number" step="0.01" value={form.purchasePrice} onChange={(e) => set("purchasePrice", e.target.value)} /></Field>
         <Field label="Units Per Purchase" hint="e.g. 50 pairs, 100 brushes"><Input type="number" step="1" value={form.purchaseQty} onChange={(e) => set("purchaseQty", e.target.value)} /></Field>
       </div>
@@ -1529,12 +1619,12 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
         </Select>
       </Field>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <Field label="Date Opened"><Input type="date" value={form.dateOpened ? form.dateOpened.slice(0, 10) : ""} onChange={(e) => set("dateOpened", e.target.value)} /></Field>
         <Field label="Expiration Date"><Input type="date" value={form.expirationDate ? form.expirationDate.slice(0, 10) : ""} onChange={(e) => set("expirationDate", e.target.value)} /></Field>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <Field label="SKU"><Input value={form.sku} onChange={(e) => set("sku", e.target.value)} /></Field>
         <Field label="Avg. Used Per Appointment" hint="Helps forecast run-out"><Input type="number" step="0.01" value={form.avgUsagePerAppt} onChange={(e) => set("avgUsagePerAppt", e.target.value)} /></Field>
       </div>
@@ -1591,12 +1681,12 @@ function ServicesView({ data, setData, showToast, setView }) {
               <Card key={svc.id} onClick={() => setEditing(svc)} style={{ padding: 18 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 15.5 }}>{svc.name}</div>
+                    <div className="sb-truncate" style={{ fontWeight: 700, fontSize: 15.5 }}>{svc.name}</div>
                     <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>{svc.category} · {svc.duration} min</div>
                   </div>
                   <div className="sb-display" style={{ fontSize: 17, fontWeight: 800 }}>{money0(svc.price)}</div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8, marginBottom: 12 }}>
                   <MiniStat label="Product Cost" value={money(cost)} color={COLORS.critical} />
                   <MiniStat label="Margin" value={pct(margin)} color={margin > 0.85 ? COLORS.good : margin > 0.6 ? COLORS.warn : COLORS.critical} />
                 </div>
@@ -1679,7 +1769,7 @@ function ServiceFormModal({ open, service, inventory, onClose, onSave, onDelete 
   return (
     <Modal open={open} onClose={onClose} title={service ? "Edit Service" : "New Service"} width={600}>
       <Field label="Service Name"><Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Hybrid Full Set" /></Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 12 }}>
         <Field label="Category"><Input value={form.category} onChange={(e) => set("category", e.target.value)} /></Field>
         <Field label="Price Charged"><Input type="number" value={form.price} onChange={(e) => set("price", e.target.value)} /></Field>
         <Field label="Duration (min)"><Input type="number" value={form.duration} onChange={(e) => set("duration", e.target.value)} /></Field>
@@ -1709,7 +1799,7 @@ function ServiceFormModal({ open, service, inventory, onClose, onSave, onDelete 
         })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 8, marginBottom: 16 }}>
         <MiniStat label="Product Cost" value={money(cost)} color={COLORS.critical} />
         <MiniStat label="Gross Profit" value={money(profit)} color={COLORS.good} />
         <MiniStat label="Margin" value={pct(margin)} color={COLORS.mocha} />
@@ -1810,6 +1900,92 @@ function RowStat({ label, value, strong, color }) {
       <span style={{ fontSize: 13.5, color: COLORS.inkSoft, fontWeight: strong ? 700 : 500 }}>{label}</span>
       <span className="sb-display" style={{ fontSize: strong ? 16 : 14, fontWeight: 800, color: color || COLORS.ink }}>{value}</span>
     </div>
+  );
+}
+
+/* ============================================================================
+   GLOBAL QUICK ACTION (floating action button + action sheet)
+   Always on-screen so adding inventory, logging a service, etc. never
+   requires scrolling to find a button.
+============================================================================ */
+
+function GlobalFab({ onClick }) {
+  const [pressed, setPressed] = useState(false);
+  return (
+    <>
+      <style>{`@media (min-width: 900px) { .sb-fab { bottom: 26px !important; } }`}</style>
+      <button
+        onClick={onClick}
+        onMouseDown={() => setPressed(true)}
+        onMouseUp={() => setPressed(false)}
+        onMouseLeave={() => setPressed(false)}
+        aria-label="Quick action"
+        className="sb-fab"
+        style={{
+          position: "fixed", right: 18, bottom: "calc(84px + env(safe-area-inset-bottom, 0px))",
+          width: 56, height: 56, borderRadius: 999, border: "none", cursor: "pointer",
+          background: `linear-gradient(135deg, ${COLORS.mocha}, ${COLORS.rose})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          boxShadow: "0 10px 26px rgba(139,107,84,0.4)", zIndex: 55,
+          transform: pressed ? "scale(0.92)" : "scale(1)", transition: "transform 0.15s ease",
+        }}
+      >
+        <Plus size={24} color="#fff" strokeWidth={2.4} />
+      </button>
+    </>
+  );
+}
+
+function QuickActionSheet({ onClose, onPick }) {
+  return (
+    <Modal open onClose={onClose} title="Quick Action">
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <QuickAction icon={Scissors} label="Log Service" sub="Record a completed appointment" onClick={() => onPick("log")} />
+        <QuickAction icon={Plus} label="Add Inventory" sub="Add a new product to your shelf" onClick={() => onPick("inventory")} />
+        <QuickAction icon={Sparkles} label="Create Service" sub="Define a new service and its recipe" onClick={() => onPick("service")} />
+        <QuickAction icon={PackageX} label="Record Waste" sub="Mark a product expired, spilled, or lost" onClick={() => onPick("waste")} />
+      </div>
+    </Modal>
+  );
+}
+
+function RecordWasteModal({ open, inventory, onClose, onSave }) {
+  const [productId, setProductId] = useState(inventory[0]?.id || "");
+  const [quantity, setQuantity] = useState(1);
+  const [reason, setReason] = useState("Used");
+
+  useEffect(() => {
+    if (open) {
+      setProductId(inventory[0]?.id || "");
+      setQuantity(1);
+      setReason("Used");
+    }
+  }, [open]);
+
+  if (!open) return null;
+  const product = inventory.find((i) => i.id === productId);
+  const cost = product ? product.unitCost * (parseFloat(quantity) || 0) : 0;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Record Waste" width={460}>
+      <Field label="Product">
+        <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
+          {inventory.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+        </Select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+        <Field label="Quantity"><Input type="number" step="0.01" value={quantity} onChange={(e) => setQuantity(e.target.value)} /></Field>
+        <Field label="Reason">
+          <Select value={reason} onChange={(e) => setReason(e.target.value)}>
+            {["Used", "Expired", "Damaged", "Lost", "Spilled", "Discarded"].map((r) => <option key={r} value={r}>{r}</option>)}
+          </Select>
+        </Field>
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <MiniStat label="Estimated Cost" value={money(cost)} color={COLORS.critical} />
+      </div>
+      <Button full onClick={() => onSave({ productId, quantity: parseFloat(quantity) || 0, reason, cost })} disabled={!product}>Record Waste</Button>
+    </Modal>
   );
 }
 
@@ -1983,7 +2159,7 @@ function ReorderGroup({ items, onAdd, empty, expiring }) {
                 <Package size={17} color={meta.color} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
+                <div className="sb-truncate" style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
                 <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
                   {expiring ? `Expires in ${Math.max(0, dte)} days` : `Current: ${item.quantity} ${item.unitType}${item.quantity !== 1 ? "s" : ""}${appts !== null ? ` · ~${Math.max(0, Math.round(appts))} appts left` : ""}`}
                 </div>
@@ -2050,6 +2226,7 @@ function InsightsView({ data, profile, setView }) {
   }, [monthCost]);
 
   const PIE_COLORS = [COLORS.mocha, COLORS.rose, COLORS.sage, COLORS.champagne, COLORS.inkSoft, COLORS.warn];
+  const isFresh = inventory.length === 0 && services.length === 0;
 
   return (
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60 }}>
@@ -2058,13 +2235,32 @@ function InsightsView({ data, profile, setView }) {
           {greeting}, {profile?.name?.split(" ")[0] || "there"}.
         </div>
         <div style={{ fontSize: 15, color: COLORS.inkSoft, lineHeight: 1.5 }}>
-          {criticalCount > 0 ? (
+          {isFresh ? (
+            "Let's get your shelf set up."
+          ) : criticalCount > 0 ? (
             <>Here's how the business is doing. <strong style={{ color: COLORS.ink }}>{lowItems.length} item{lowItems.length !== 1 ? "s" : ""}</strong> need attention — <span onClick={() => setView && setView("insights")} style={{ color: COLORS.mocha, fontWeight: 700, cursor: "pointer" }}>view details</span>.</>
           ) : (
             "Here's how the business is doing today."
           )}
         </div>
       </div>
+
+      {isFresh && (
+        <Card style={{ padding: 22, marginBottom: 26 }} hover={false}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 999, background: COLORS.cardAlt, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Sparkles size={20} color={COLORS.mocha} strokeWidth={1.8} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sb-display" style={{ fontWeight: 800, fontSize: 15, marginBottom: 3 }}>Your shelf is empty</div>
+              <div style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 1.5 }}>Add your first product to start tracking value, cost per service, and reorder needs.</div>
+            </div>
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <Button onClick={() => setView("inventory")}><Plus size={16} /> Add Your First Product</Button>
+          </div>
+        </Card>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 12, marginBottom: 26 }}>
         <StatCard label="Inventory Value" value={invValue} icon={Package} tone={COLORS.mocha} onClick={() => setView("inventory")} />
@@ -2076,44 +2272,54 @@ function InsightsView({ data, profile, setView }) {
       <Card style={{ padding: 18, marginBottom: 16 }} hover={false}>
         <div className="sb-display" style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>Monthly Product Spending</div>
         <div style={{ fontSize: 12, color: COLORS.inkSoft, marginBottom: 10 }}>Last 6 months</div>
-        <ResponsiveContainer width="100%" height={140}>
-          <AreaChart data={spendTrend}>
-            <defs>
-              <linearGradient id="spendGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={COLORS.mocha} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={COLORS.mocha} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} />
-            <YAxis hide />
-            <Tooltip formatter={(v) => money0(v)} contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
-            <Area type="monotone" dataKey="value" stroke={COLORS.mocha} strokeWidth={2.5} fill="url(#spendGrad)" />
-          </AreaChart>
-        </ResponsiveContainer>
+        {serviceLogs.length === 0 ? (
+          <ChartEmptyState text="Log services to see your spending trend here" />
+        ) : (
+          <ResponsiveContainer width="100%" height={140}>
+            <AreaChart data={spendTrend}>
+              <defs>
+                <linearGradient id="spendGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={COLORS.mocha} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={COLORS.mocha} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} />
+              <YAxis hide />
+              <Tooltip formatter={(v) => money0(v)} contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
+              <Area type="monotone" dataKey="value" stroke={COLORS.mocha} strokeWidth={2.5} fill="url(#spendGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </Card>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
         <Card style={{ padding: 18 }} hover onClick={() => setView("inventory")}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div className="sb-display" style={{ fontSize: 14, fontWeight: 800 }}>Inventory Value by Category</div>
             <ChevronRight size={15} color={COLORS.inkSoft} />
           </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie data={catValues.slice(0, 6)} dataKey="value" nameKey="category" innerRadius={40} outerRadius={68} paddingAngle={2}>
-                {catValues.slice(0, 6).map((entry, i) => <Cell key={entry.category} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-              </Pie>
-              <Tooltip formatter={(v) => money0(v)} contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-            {catValues.slice(0, 6).map((c, i) => (
-              <div key={c.category} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 3, background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                {c.category}
+          {catValues.length === 0 ? (
+            <ChartEmptyState text="Add inventory to see value by category" />
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={catValues.slice(0, 6)} dataKey="value" nameKey="category" innerRadius={40} outerRadius={68} paddingAngle={2}>
+                    {catValues.slice(0, 6).map((entry, i) => <Cell key={entry.category} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v) => money0(v)} contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                {catValues.slice(0, 6).map((c, i) => (
+                  <div key={c.category} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 3, background: PIE_COLORS[i % PIE_COLORS.length] }} />
+                    {c.category}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </Card>
 
         <Card style={{ padding: 18 }} hover onClick={() => setView("inventory")}>
@@ -2121,48 +2327,67 @@ function InsightsView({ data, profile, setView }) {
             <div className="sb-display" style={{ fontSize: 14, fontWeight: 800 }}>Most Used Products</div>
             <ChevronRight size={15} color={COLORS.inkSoft} />
           </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={productUsage.map((p) => ({ name: p.product.name.split(" ").slice(0, 2).join(" "), amount: Math.round(p.amount * 100) / 100 }))} layout="vertical" margin={{ left: 0, right: 12 }}>
-              <XAxis type="number" hide />
-              <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10.5, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
-              <Bar dataKey="amount" fill={COLORS.sage} radius={[0, 6, 6, 0]} barSize={16} />
-            </BarChart>
-          </ResponsiveContainer>
+          {productUsage.length === 0 ? (
+            <ChartEmptyState text="Log services to see your top products" />
+          ) : (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={productUsage.map((p) => ({ name: p.product.name.split(" ").slice(0, 2).join(" "), amount: Math.round(p.amount * 100) / 100 }))} layout="vertical" margin={{ left: 0, right: 12 }}>
+                <XAxis type="number" hide />
+                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10.5, fill: COLORS.inkSoft }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 16, border: `1px solid ${COLORS.line}`, fontSize: 12 }} />
+                <Bar dataKey="amount" fill={COLORS.sage} radius={[0, 6, 6, 0]} barSize={16} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </Card>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <RankCard title="Highest Margin Services" items={highestMargin} accent={COLORS.good} onClick={() => setView("services")} />
-        <RankCard title="Lowest Margin Services" items={lowestMargin} accent={COLORS.critical} onClick={() => setView("services")} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+        <RankCard title="Highest Margin Services" items={highestMargin} accent={COLORS.good} onClick={() => setView("services")} emptyText="No services yet" />
+        <RankCard title="Lowest Margin Services" items={lowestMargin} accent={COLORS.critical} onClick={() => setView("services")} emptyText="No services yet" />
       </div>
       <div style={{ marginTop: 16 }}>
-        <RankCard title="Most Expensive Services to Perform" items={mostExpensive} accent={COLORS.mocha} showCost />
+        <RankCard title="Most Expensive Services to Perform" items={mostExpensive} accent={COLORS.mocha} showCost emptyText="No services yet" />
       </div>
     </div>
   );
 }
 
-function RankCard({ title, items, accent, showCost, onClick }) {
+function ChartEmptyState({ text }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "34px 10px", textAlign: "center" }}>
+      <div style={{ width: 38, height: 38, borderRadius: 999, background: COLORS.cardAlt, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+        <BarChart3 size={17} color={COLORS.mocha} strokeWidth={1.6} />
+      </div>
+      <div style={{ fontSize: 12.5, color: COLORS.inkSoft, maxWidth: 200, lineHeight: 1.5 }}>{text}</div>
+    </div>
+  );
+}
+
+function RankCard({ title, items, accent, showCost, onClick, emptyText }) {
   return (
     <Card style={{ padding: 18 }} hover={!!onClick} onClick={onClick}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div className="sb-display" style={{ fontSize: 14, fontWeight: 800 }}>{title}</div>
         {onClick && <ChevronRight size={15} color={COLORS.inkSoft} />}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {items.map((s, idx) => (
-          <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-              <div className="sb-display" style={{ width: 20, fontSize: 11, fontWeight: 800, color: COLORS.inkSoft }}>{idx + 1}</div>
-              <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, padding: "6px 0" }}>{emptyText || "Nothing here yet"}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((s, idx) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div className="sb-display" style={{ width: 20, fontSize: 11, fontWeight: 800, color: COLORS.inkSoft }}>{idx + 1}</div>
+                <div className="sb-truncate" style={{ fontSize: 13, fontWeight: 600 }}>{s.name}</div>
+              </div>
+              <div className="sb-display" style={{ fontSize: 13, fontWeight: 800, color: accent, flexShrink: 0 }}>
+                {showCost ? money(s.cost) : pct(s.margin)}
+              </div>
             </div>
-            <div className="sb-display" style={{ fontSize: 13, fontWeight: 800, color: accent, flexShrink: 0 }}>
-              {showCost ? money(s.cost) : pct(s.margin)}
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -2196,11 +2421,11 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60, maxWidth: 640 }}>
       <SectionHeader title="Profile" />
       <Card style={{ padding: 18, marginBottom: 22 }} hover={false}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
           <Field label="Your Name"><Input value={profile.name} onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))} /></Field>
           <Field label="Business Name"><Input value={profile.business} onChange={(e) => setProfile((p) => ({ ...p, business: e.target.value }))} /></Field>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
           <Field label="Currency">
             <Select value={profile.currency || "USD"} onChange={(e) => setProfile((p) => ({ ...p, currency: e.target.value }))}>
               <option value="USD">USD ($)</option><option value="EUR">EUR (€)</option><option value="GBP">GBP (£)</option><option value="CAD">CAD ($)</option>
