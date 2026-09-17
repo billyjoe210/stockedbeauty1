@@ -56,6 +56,8 @@ const FONT_STYLE = `
   .sb-fade-up { animation: sbFadeUp 0.45s ease both; }
   .sb-pop { animation: sbPop 0.2s ease both; }
   .sb-count { transition: all 0.4s ease; }
+  @keyframes sbSpin { to { transform: rotate(360deg); } }
+  .sb-spin { animation: sbSpin 0.8s linear infinite; }
 `;
 
 /* ============================================================================
@@ -1524,7 +1526,7 @@ function QuickAddModal({ open, onClose, onPick, inventory }) {
       {mode === "choose" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <QuickAction icon={Plus} label="Add Product" sub="Enter a new product manually" onClick={() => onPick("new")} />
-          <QuickAction icon={Camera} label="Scan Barcode" sub="Coming soon — camera scanning" onClick={() => onPick("new")} />
+          <QuickAction icon={Camera} label="Scan Product Label" sub="Snap a photo and we'll read the name" onClick={() => onPick("new")} />
           <QuickAction icon={Copy} label="Duplicate Existing Item" sub="Start from a product you already track" onClick={() => setMode("duplicate")} />
         </div>
       )}
@@ -1562,6 +1564,102 @@ function QuickAction({ icon: Icon, label, sub, onClick }) {
   );
 }
 
+/* ============================================================================
+   LABEL SCANNER (camera → OCR → autofill product name)
+   Loads Tesseract.js from a CDN on first use (no bundler dependency needed) —
+   runs entirely in the browser, no server or API key required.
+============================================================================ */
+
+let tesseractLoadPromise = null;
+function loadTesseract() {
+  if (typeof window !== "undefined" && window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (tesseractLoadPromise) return tesseractLoadPromise;
+  tesseractLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    script.async = true;
+    script.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error("OCR library failed to initialize")));
+    script.onerror = () => reject(new Error("Couldn't load the OCR library"));
+    document.head.appendChild(script);
+  });
+  return tesseractLoadPromise;
+}
+
+function ScanNameField({ value, onChange }) {
+  const fileInputRef = useRef(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [scanLines, setScanLines] = useState([]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setScanError(""); setScanLines([]); setScanning(true);
+    try {
+      const Tesseract = await loadTesseract();
+      const { data } = await Tesseract.recognize(file, "eng");
+      const lines = (data?.text || "")
+        .split("\n")
+        .map((l) => l.replace(/\s+/g, " ").trim())
+        .filter((l) => l.length > 1)
+        .slice(0, 6);
+      if (lines.length === 0) setScanError("Couldn't find readable text in that photo — try better lighting or a closer shot.");
+      setScanLines(lines);
+    } catch (err) {
+      setScanError("Couldn't read that photo. Try again, or enter the name manually.");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  return (
+    <Field label="Product Name">
+      <div style={{ display: "flex", gap: 8 }}>
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. 11mm CC 0.05 Lash Tray" style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          title="Scan a label with your camera"
+          style={{
+            width: 46, height: 46, borderRadius: 14, border: `1.5px solid ${COLORS.line}`, background: "#fff",
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+          }}
+        >
+          <Camera size={18} color={COLORS.mocha} />
+        </button>
+      </div>
+      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFile} />
+
+      {scanning && (
+        <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: COLORS.inkSoft }}>
+          <span className="sb-spin" style={{ width: 14, height: 14, borderRadius: 999, border: `2px solid ${COLORS.line}`, borderTopColor: COLORS.mocha, display: "inline-block" }} />
+          Reading the label…
+        </div>
+      )}
+
+      {!!scanError && <div style={{ marginTop: 9, fontSize: 12.5, color: COLORS.critical }}>{scanError}</div>}
+
+      {scanLines.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11.5, color: COLORS.inkSoft, marginBottom: 7 }}>Tap the line that's the product name:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {scanLines.map((line, i) => (
+              <button
+                key={i} type="button"
+                onClick={() => { onChange(line); setScanLines([]); }}
+                style={{ fontSize: 12.5, fontWeight: 600, padding: "8px 13px", borderRadius: 999, border: `1px solid ${COLORS.line}`, background: COLORS.cardAlt, cursor: "pointer", color: COLORS.ink }}
+              >
+                {line}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </Field>
+  );
+}
+
 function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onDelete }) {
   const blank = () => ({
     id: uid("inv"), name: "", brand: "", category: categories[0]?.name || "Other", unitType: "unit",
@@ -1585,7 +1683,7 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
 
   return (
     <Modal open={open} onClose={onClose} title={item ? "Edit Product" : "Add Product"} width={560}>
-      <Field label="Product Name"><Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. 11mm CC 0.05 Lash Tray" /></Field>
+      <ScanNameField value={form.name} onChange={(v) => set("name", v)} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         <Field label="Brand"><Input value={form.brand} onChange={(e) => set("brand", e.target.value)} placeholder="Brand" /></Field>
         <Field label="Category">
@@ -2405,6 +2503,7 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
   const { categories, suppliers } = data;
   const [newCat, setNewCat] = useState("");
   const [newSupplier, setNewSupplier] = useState({ name: "", website: "" });
+  const importInputRef = useRef(null);
 
   const addCategory = () => {
     if (!newCat.trim()) return;
@@ -2421,6 +2520,54 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
     showToast("Supplier added");
   };
   const removeSupplier = (id) => setData((d) => ({ ...d, suppliers: d.suppliers.filter((s) => s.id !== id) }));
+
+  const exportData = () => {
+    try {
+      const payload = { exportedAt: new Date().toISOString(), profile, ...data };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `stocked-beauty-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Backup downloaded");
+    } catch (e) {
+      showToast("Export failed");
+    }
+  };
+
+  const importData = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        setData((d) => ({
+          ...d,
+          inventory: parsed.inventory ?? d.inventory,
+          categories: parsed.categories ?? d.categories,
+          suppliers: parsed.suppliers ?? d.suppliers,
+          services: parsed.services ?? d.services,
+          serviceLogs: parsed.serviceLogs ?? d.serviceLogs,
+          transactions: parsed.transactions ?? d.transactions,
+          wasteLogs: parsed.wasteLogs ?? d.wasteLogs,
+          reorderList: parsed.reorderList ?? d.reorderList,
+        }));
+        if (parsed.profile) {
+          setProfile((p) => ({ ...p, ...parsed.profile }));
+        }
+        showToast("Backup restored");
+      } catch (err) {
+        showToast("Couldn't read that file — is it a Stocked Beauty backup?");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
 
   return (
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60, maxWidth: 640 }}>
@@ -2494,18 +2641,35 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
       </Card>
 
       <SectionHeader title="Data" />
-      <Card style={{ padding: 18 }} hover={false}>
+      <Card style={{ padding: 18, marginBottom: 22 }} hover={false}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16, padding: 12, background: COLORS.cardAlt, borderRadius: 14 }}>
+          <CheckCircle2 size={16} color={COLORS.good} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>
+            Everything you enter is saved automatically on this device, so it's still here after you refresh or after the app gets updated — no re-entering needed. Download a backup below before switching phones, clearing Safari data, or just for peace of mind.
+          </div>
+        </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 13.5 }}>Export Data</div>
-            <div style={{ fontSize: 12, color: COLORS.inkSoft }}>Download your inventory and services as CSV</div>
+            <div style={{ fontWeight: 700, fontSize: 13.5 }}>Download Backup</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft }}>Save everything as a file you can restore later</div>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => showToast("Export coming soon")}>Export</Button>
+          <Button size="sm" variant="secondary" onClick={exportData}>Export</Button>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 13.5, color: COLORS.critical }}>Reset Demo Data</div>
-            <div style={{ fontSize: 12, color: COLORS.inkSoft }}>Clear everything and start onboarding again</div>
+            <div style={{ fontWeight: 700, fontSize: 13.5 }}>Restore Backup</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft }}>Load data from a previously downloaded file</div>
+          </div>
+          <input ref={importInputRef} type="file" accept="application/json" onChange={importData} style={{ display: "none" }} />
+          <Button size="sm" variant="secondary" onClick={() => importInputRef.current?.click()}>Import</Button>
+        </div>
+      </Card>
+
+      <Card style={{ padding: 18 }} hover={false}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: COLORS.critical }}>Reset Everything</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft }}>Clear all data and start onboarding again</div>
           </div>
           <Button size="sm" variant="danger" onClick={onReset}>Reset</Button>
         </div>
