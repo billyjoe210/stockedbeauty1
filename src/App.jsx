@@ -1585,6 +1585,43 @@ function loadTesseract() {
   return tesseractLoadPromise;
 }
 
+// Downscale + grayscale + boost contrast before OCR. Raw, full-resolution
+// phone photos (often 3000px+, full color, with packaging texture and
+// glare) are exactly what makes Tesseract hallucinate symbol noise instead
+// of words — this cleans the image up first.
+function preprocessImageForOCR(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const maxW = 1400;
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.filter = "grayscale(1) contrast(1.4) brightness(1.08)";
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Couldn't process that photo"))), "image/jpeg", 0.92);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't load that photo")); };
+    img.src = url;
+  });
+}
+
+// Tesseract can return lines that are mostly punctuation/noise from
+// packaging texture, glare, or icons it mistook for characters. Keep only
+// lines that look like real words: a decent letter count and a high enough
+// ratio of letters/digits/spaces to total characters.
+function looksLikeText(line) {
+  const letters = (line.match(/[A-Za-z]/g) || []).length;
+  const alnumOrSpace = (line.match(/[A-Za-z0-9 .\-'&]/g) || []).length;
+  return letters >= 2 && alnumOrSpace / line.length >= 0.7;
+}
+
 function ScanNameField({ value, onChange }) {
   const fileInputRef = useRef(null);
   const [scanning, setScanning] = useState(false);
@@ -1596,19 +1633,28 @@ function ScanNameField({ value, onChange }) {
     e.target.value = "";
     if (!file) return;
     setScanError(""); setScanLines([]); setScanning(true);
+    let worker = null;
     try {
       const Tesseract = await loadTesseract();
-      const { data } = await Tesseract.recognize(file, "eng");
+      const processed = await preprocessImageForOCR(file);
+      worker = await Tesseract.createWorker("eng");
+      // Sparse-text mode: look for scattered words anywhere in the image
+      // rather than assuming one uniform block of a full page — much better
+      // fit for a product label than Tesseract's default.
+      await worker.setParameters({ tessedit_pageseg_mode: "11" });
+      const { data } = await worker.recognize(processed);
       const lines = (data?.text || "")
         .split("\n")
         .map((l) => l.replace(/\s+/g, " ").trim())
-        .filter((l) => l.length > 1)
+        .filter((l) => l.length > 1 && looksLikeText(l))
+        .filter((l, i, arr) => arr.indexOf(l) === i)
         .slice(0, 6);
-      if (lines.length === 0) setScanError("Couldn't find readable text in that photo — try better lighting or a closer shot.");
+      if (lines.length === 0) setScanError("Couldn't find readable text in that photo — try better lighting or a closer, flatter shot of the label.");
       setScanLines(lines);
     } catch (err) {
       setScanError("Couldn't read that photo. Try again, or enter the name manually.");
     } finally {
+      if (worker) { try { await worker.terminate(); } catch {} }
       setScanning(false);
     }
   };
