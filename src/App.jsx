@@ -1585,16 +1585,19 @@ function loadTesseract() {
   return tesseractLoadPromise;
 }
 
-// Downscale + grayscale + boost contrast before OCR. Raw, full-resolution
-// phone photos (often 3000px+, full color, with packaging texture and
-// glare) are exactly what makes Tesseract hallucinate symbol noise instead
-// of words — this cleans the image up first.
+// Downscale + binarize before OCR. Raw, full-resolution phone photos (often
+// 3000px+, full color, with packaging texture and glare) are exactly what
+// makes Tesseract hallucinate symbol noise instead of words. A CSS filter
+// alone (grayscale/contrast) only softens that; real black-and-white
+// thresholding (Otsu's method — auto-picks the brightness cutoff that best
+// separates ink from background) is the single biggest lever for clean
+// printed text, so we compute that ourselves pixel-by-pixel.
 function preprocessImageForOCR(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
-      const maxW = 1400;
+      const maxW = 1800;
       const scale = Math.min(1, maxW / img.width);
       const w = Math.max(1, Math.round(img.width * scale));
       const h = Math.max(1, Math.round(img.height * scale));
@@ -1602,10 +1605,41 @@ function preprocessImageForOCR(file) {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
-      ctx.filter = "grayscale(1) contrast(1.4) brightness(1.08)";
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Couldn't process that photo"))), "image/jpeg", 0.92);
+
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+      const n = w * h;
+      const gray = new Uint8ClampedArray(n);
+      const hist = new Array(256).fill(0);
+      for (let p = 0, i = 0; p < n; p++, i += 4) {
+        const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        gray[p] = g;
+        hist[g | 0]++;
+      }
+      // Otsu's method: find the threshold that minimizes combined
+      // within-class variance between "ink" and "background" pixels.
+      let sum = 0;
+      for (let t = 0; t < 256; t++) sum += t * hist[t];
+      let sumB = 0, wB = 0, varMax = -1, threshold = 128;
+      for (let t = 0; t < 256; t++) {
+        wB += hist[t];
+        if (wB === 0) continue;
+        const wF = n - wB;
+        if (wF === 0) break;
+        sumB += t * hist[t];
+        const mB = sumB / wB;
+        const mF = (sum - sumB) / wF;
+        const between = wB * wF * (mB - mF) * (mB - mF);
+        if (between > varMax) { varMax = between; threshold = t; }
+      }
+      for (let p = 0, i = 0; p < n; p++, i += 4) {
+        const v = gray[p] > threshold ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Couldn't process that photo"))), "image/jpeg", 0.95);
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't load that photo")); };
     img.src = url;
@@ -1638,17 +1672,26 @@ function ScanNameField({ value, onChange }) {
       const Tesseract = await loadTesseract();
       const processed = await preprocessImageForOCR(file);
       worker = await Tesseract.createWorker("eng");
-      // Sparse-text mode: look for scattered words anywhere in the image
-      // rather than assuming one uniform block of a full page — much better
-      // fit for a product label than Tesseract's default.
-      await worker.setParameters({ tessedit_pageseg_mode: "11" });
-      const { data } = await worker.recognize(processed);
-      const lines = (data?.text || "")
-        .split("\n")
-        .map((l) => l.replace(/\s+/g, " ").trim())
-        .filter((l) => l.length > 1 && looksLikeText(l))
-        .filter((l, i, arr) => arr.indexOf(l) === i)
-        .slice(0, 6);
+
+      // Run two passes with different layout assumptions and merge the
+      // results — "sparse text" (find scattered words anywhere) can
+      // actually fragment one clean bold line worse than "uniform block"
+      // (assume it's all one block of text) would, and vice versa
+      // depending on the label. Trying both and combining catches more.
+      const allLines = [];
+      for (const psm of ["6", "11"]) {
+        await worker.setParameters({ tessedit_pageseg_mode: psm });
+        const { data } = await worker.recognize(processed);
+        (data?.text || "")
+          .split("\n")
+          .map((l) => l.replace(/\s+/g, " ").trim())
+          .filter((l) => l.length > 1 && looksLikeText(l))
+          .forEach((l) => allLines.push(l));
+      }
+      const lines = allLines
+        .filter((l, i, arr) => arr.findIndex((x) => x.toLowerCase() === l.toLowerCase()) === i)
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 8);
       if (lines.length === 0) setScanError("Couldn't find readable text in that photo — try better lighting or a closer, flatter shot of the label.");
       setScanLines(lines);
     } catch (err) {
@@ -1680,7 +1723,7 @@ function ScanNameField({ value, onChange }) {
       {scanning && (
         <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: COLORS.inkSoft }}>
           <span className="sb-spin" style={{ width: 14, height: 14, borderRadius: 999, border: `2px solid ${COLORS.line}`, borderTopColor: COLORS.mocha, display: "inline-block" }} />
-          Reading the label…
+          Reading the label — this can take a few seconds…
         </div>
       )}
 
