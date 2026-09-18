@@ -2648,8 +2648,9 @@ function InsightsView({ data, profile, setView }) {
 
   const lowItems = inventory.filter((i) => ["low", "critical", "expiring", "expired"].includes(stockStatus(i)));
   const criticalCount = inventory.filter((i) => ["critical", "expired"].includes(stockStatus(i))).length;
-  const hour = 9;
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const hour = new Date().getHours();
+  const isLateNight = hour < 5 || hour >= 23;
+  const greeting = isLateNight ? "Up late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
   const firstName = profile?.name?.split(" ")[0] || "there";
   const greetOptions = useMemo(() => [firstName, "Beautiful", "Gorgeous", "Superstar", "Boss Babe", "Stunning"], [firstName]);
@@ -2700,7 +2701,7 @@ function InsightsView({ data, profile, setView }) {
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60 }}>
       <div style={{ marginBottom: 28 }}>
         <div className="sb-display" style={{ fontSize: 30, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.01em" }}>
-          {greeting}, {greetName}.
+          {greeting}, {greetName}{isLateNight ? "?" : "."}
         </div>
         <div style={{ fontSize: 15, color: COLORS.inkSoft, lineHeight: 1.5 }}>
           {isFresh ? (
