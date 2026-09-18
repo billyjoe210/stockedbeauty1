@@ -197,14 +197,17 @@ const NAV = [
 
 const uid = (p = "id") => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 
-// iOS Safari sometimes reports env(safe-area-inset-bottom) as 0 on first
-// paint and only finalizes the real value after the browser is forced to
-// relayout — which can happen on rotation, but on some iOS versions only
-// happens after the first scroll/touch gesture on the page. Reading it
-// purely in CSS can't work around either case, so we measure it with a
-// hidden probe element instead: a short burst of polling right after mount
-// catches most cases without needing any specific gesture, and scroll/touch/
-// resize/orientation listeners catch it if it only settles later.
+// Two separate iOS bugs stack up here:
+// 1) env(safe-area-inset-bottom) sometimes isn't finalized on first paint —
+//    handled by measuring it ourselves with a probe element and polling
+//    briefly after mount.
+// 2) Fixed-position elements that use backdrop-filter (our tab bar and FAB
+//    both do, for the frosted-glass look) can get visually "stuck" in their
+//    old composited position when iOS restores a backgrounded app, even
+//    though the underlying CSS is already correct — a known WebKit quirk.
+//    Rotating or swiping forces WebKit to recompute it; we force the same
+//    recomputation automatically by nudging a transform on resume, via
+//    document.visibilitychange / pageshow.
 function useSafeAreaBottom() {
   const [inset, setInset] = useState(0);
   useEffect(() => {
@@ -215,14 +218,43 @@ function useSafeAreaBottom() {
       const val = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
       setInset((prev) => (val !== prev ? val : prev));
     };
-    measure();
+
+    // Forces WebKit to recompute fixed-position + backdrop-filter layers —
+    // the standard workaround for the "stuck after resume" compositing bug.
+    const nudgeRepaint = () => {
+      const prevTransform = document.body.style.transform;
+      const prevWillChange = document.body.style.willChange;
+      document.body.style.willChange = "transform";
+      document.body.style.transform = "translateZ(0.01px)";
+      requestAnimationFrame(() => {
+        document.body.style.transform = prevTransform;
+        requestAnimationFrame(() => { document.body.style.willChange = prevWillChange; });
+      });
+    };
+
+    let pollTimers = [];
+    const runSettleBurst = () => {
+      pollTimers.forEach(clearTimeout);
+      measure();
+      nudgeRepaint();
+      pollTimers = [80, 160, 300, 500, 800, 1200, 1800, 2500].map((ms) =>
+        setTimeout(() => { measure(); nudgeRepaint(); }, ms)
+      );
+    };
+
+    runSettleBurst();
     const raf1 = requestAnimationFrame(measure);
     const raf2 = requestAnimationFrame(() => requestAnimationFrame(measure));
 
-    // Poll for a couple seconds after mount — catches whatever mechanism
-    // iOS uses to finalize the value without needing to guess the right
-    // event name for a given iOS version.
-    const pollTimers = [80, 160, 300, 500, 800, 1200, 1800, 2500].map((ms) => setTimeout(measure, ms));
+    // Re-run the whole settle burst whenever the app becomes visible again —
+    // this is what covers "closed and reopened" (resumed from background),
+    // which a one-time mount effect alone can't catch since the page isn't
+    // actually reloading in that case.
+    const onResume = () => runSettleBurst();
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") onResume(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onResume);
+    window.addEventListener("focus", onResume);
 
     const opts = { passive: true };
     window.addEventListener("resize", measure);
@@ -239,6 +271,9 @@ function useSafeAreaBottom() {
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
       pollTimers.forEach(clearTimeout);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onResume);
+      window.removeEventListener("focus", onResume);
       window.removeEventListener("resize", measure);
       window.removeEventListener("orientationchange", measure);
       window.removeEventListener("scroll", measure, opts);
