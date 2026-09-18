@@ -321,6 +321,7 @@ function buildEmptyData(professionIds = ["lash"]) {
     transactions: [],
     wasteLogs: [],
     reorderList: [],
+    recentlyOrdered: [],
     categories: categoriesForProfessions(professionIds),
   };
 }
@@ -599,8 +600,9 @@ function buildDemoData(professionIds = ["lash"]) {
   ];
 
   const categories = categoriesForProfessions(professionIds);
+  const recentlyOrdered = [];
 
-  return { suppliers, inventory, services, serviceLogs, transactions, wasteLogs, reorderList, categories };
+  return { suppliers, inventory, services, serviceLogs, transactions, wasteLogs, reorderList, recentlyOrdered, categories };
 }
 
 /* ============================================================================
@@ -2455,7 +2457,7 @@ function RecordWasteModal({ open, inventory, onClose, onSave }) {
 ============================================================================ */
 
 function ReorderView({ data, setData, showToast }) {
-  const { inventory, reorderList, suppliers } = data;
+  const { inventory, reorderList, suppliers, recentlyOrdered } = data;
 
   const recommendations = useMemo(() => {
     return inventory
@@ -2490,8 +2492,36 @@ function ReorderView({ data, setData, showToast }) {
     showToast(`Added ${item.name} to reorder list`);
   };
 
+  // One-tap "already reordered it" for an item straight from the
+  // Critical/Running Low/Expiring Soon lists — restocks it immediately
+  // (and, for an expiring item, treats it as a fresh replacement batch so
+  // it isn't still flagged as expiring) and logs it to Recently Ordered.
+  // Since Critical/Low/Expiring are computed live from current stock
+  // status, the item disappears from those sections automatically the
+  // moment its status is no longer critical/low/expiring.
+  const markReordered = (item, status, suggestedQty) => {
+    const today = new Date("2026-08-23T09:00:00");
+    const healthyQty = Math.max(item.quantity + suggestedQty, (item.reorderThreshold || 1) * 2.5);
+    const patch = { quantity: healthyQty };
+    if (status === "expiring" || status === "expired") {
+      const openedDate = item.dateOpened ? new Date(item.dateOpened) : today;
+      const oldExpiry = item.expirationDate ? new Date(item.expirationDate) : null;
+      const shelfLifeMs = oldExpiry && oldExpiry > openedDate ? oldExpiry - openedDate : 60 * 86400000;
+      patch.dateOpened = today.toISOString();
+      patch.expirationDate = new Date(today.getTime() + shelfLifeMs).toISOString();
+    }
+    setData((d) => ({
+      ...d,
+      inventory: d.inventory.map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
+      recentlyOrdered: [
+        { id: uid("ro"), productId: item.id, productName: item.name, quantity: suggestedQty, reason: status, date: today.toISOString() },
+        ...d.recentlyOrdered,
+      ].slice(0, 30),
+    }));
+    showToast(`${item.name} marked as reordered`);
+  };
+
   const cartItems = reorderList.filter((r) => !r.purchased);
-  const purchasedItems = reorderList.filter((r) => r.purchased);
   const cartTotal = cartItems.reduce((sum, r) => {
     const p = inventory.find((i) => i.id === r.productId);
     return sum + (p ? p.unitCost * r.quantity : 0);
@@ -2500,12 +2530,19 @@ function ReorderView({ data, setData, showToast }) {
   const updateQty = (id, qty) => setData((d) => ({ ...d, reorderList: d.reorderList.map((r) => (r.id === id ? { ...r, quantity: Math.max(1, qty) } : r)) }));
   const removeItem = (id) => setData((d) => ({ ...d, reorderList: d.reorderList.filter((r) => r.id !== id) }));
   const markPurchased = (id) => {
+    const today = new Date("2026-08-23T09:00:00");
     setData((d) => {
       const target = d.reorderList.find((r) => r.id === id);
+      const product = target ? d.inventory.find((i) => i.id === target.productId) : null;
+      const addedQty = target && product ? target.quantity * (product.unitType === "tray" || product.unitType === "bottle" ? 1 : (product.purchaseQty || 1)) : 0;
       return {
         ...d,
         reorderList: d.reorderList.map((r) => (r.id === id ? { ...r, purchased: true } : r)),
-        inventory: target ? d.inventory.map((i) => (i.id === target.productId ? { ...i, quantity: i.quantity + target.quantity * (i.unitType === "tray" || i.unitType === "bottle" ? 1 : (i.purchaseQty || 1)) } : i)) : d.inventory,
+        inventory: target ? d.inventory.map((i) => (i.id === target.productId ? { ...i, quantity: i.quantity + addedQty } : i)) : d.inventory,
+        recentlyOrdered: product ? [
+          { id: uid("ro"), productId: product.id, productName: product.name, quantity: target.quantity, reason: "cart", date: today.toISOString() },
+          ...d.recentlyOrdered,
+        ].slice(0, 30) : d.recentlyOrdered,
       };
     });
     showToast("Marked as purchased — inventory restocked");
@@ -2527,13 +2564,13 @@ function ReorderView({ data, setData, showToast }) {
   return (
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 100 }}>
       <SectionHeader title="Critical" />
-      <ReorderGroup items={groups.critical} onAdd={addToCart} empty="Nothing critical right now." />
+      <ReorderGroup items={groups.critical} onAdd={addToCart} onMarkReordered={markReordered} empty="Nothing critical right now." />
 
       <SectionHeader title="Running Low" />
-      <ReorderGroup items={groups.low} onAdd={addToCart} empty="Nothing running low." />
+      <ReorderGroup items={groups.low} onAdd={addToCart} onMarkReordered={markReordered} empty="Nothing running low." />
 
       <SectionHeader title="Expiring Soon" />
-      <ReorderGroup items={groups.expiring} onAdd={addToCart} empty="Nothing expiring soon." expiring />
+      <ReorderGroup items={groups.expiring} onAdd={addToCart} onMarkReordered={markReordered} empty="Nothing expiring soon." expiring />
 
       <div style={{ height: 8 }} />
       <SectionHeader title="Reorder List" action={cartItems.length > 0 && <LinkBtn onClick={exportList}>Export</LinkBtn>} />
@@ -2574,22 +2611,24 @@ function ReorderView({ data, setData, showToast }) {
         </>
       )}
 
-      {purchasedItems.length > 0 && (
-        <>
-          <SectionHeader title="Purchased" />
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {purchasedItems.map((r) => {
-              const p = inventory.find((i) => i.id === r.productId);
-              if (!p) return null;
-              return (
-                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", padding: "11px 16px", background: COLORS.cardAlt, borderRadius: 18, fontSize: 13 }}>
-                  <span style={{ color: COLORS.inkSoft }}>{p.name} × {r.quantity}</span>
-                  <Check size={15} color={COLORS.good} />
-                </div>
-              );
-            })}
-          </div>
-        </>
+      <div style={{ height: 8 }} />
+      <SectionHeader title="Recently Ordered" />
+      {(!recentlyOrdered || recentlyOrdered.length === 0) ? (
+        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, padding: "10px 2px" }}>Nothing reordered yet — mark an item above once you've placed the order.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {recentlyOrdered.map((r) => (
+            <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 16px", background: COLORS.cardAlt, borderRadius: 18, fontSize: 13 }}>
+              <div style={{ minWidth: 0 }}>
+                <div className="sb-truncate" style={{ fontWeight: 600, color: COLORS.ink }}>{r.productName}</div>
+                <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>{timeAgo(r.date)}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, color: COLORS.good }}>
+                <CheckCircle2 size={15} />
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -2604,7 +2643,7 @@ function QtyBtn({ children, onClick }) {
   );
 }
 
-function ReorderGroup({ items, onAdd, empty, expiring }) {
+function ReorderGroup({ items, onAdd, onMarkReordered, empty, expiring }) {
   if (items.length === 0) {
     return <div style={{ fontSize: 12.5, color: COLORS.inkSoft, padding: "10px 2px", marginBottom: 20 }}>{empty}</div>;
   }
@@ -2626,12 +2665,14 @@ function ReorderGroup({ items, onAdd, empty, expiring }) {
                 </div>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
-              <div style={{ fontSize: 12.5, color: COLORS.inkSoft }}>
-                Suggested: <strong style={{ color: COLORS.ink }}>{suggestedQty} {item.unitType}{suggestedQty !== 1 ? "s" : ""}</strong> · {money(item.unitCost * suggestedQty)}
-              </div>
-              <Button size="sm" variant="secondary" onClick={() => onAdd(item, suggestedQty)}><Plus size={13} /> Add to List</Button>
+            <div style={{ fontSize: 12.5, color: COLORS.inkSoft, marginTop: 12 }}>
+              Suggested: <strong style={{ color: COLORS.ink }}>{suggestedQty} {item.unitType}{suggestedQty !== 1 ? "s" : ""}</strong> · {money(item.unitCost * suggestedQty)}
             </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
+              <Button size="sm" variant="secondary" onClick={() => onAdd(item, suggestedQty)}><Plus size={13} /> Add to List</Button>
+              <Button size="sm" variant="accent" onClick={() => onMarkReordered(item, status, suggestedQty)}><Check size={13} /> Mark Reordered</Button>
+            </div>
+
           </Card>
         );
       })}
@@ -2922,6 +2963,7 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
           transactions: parsed.transactions ?? d.transactions,
           wasteLogs: parsed.wasteLogs ?? d.wasteLogs,
           reorderList: parsed.reorderList ?? d.reorderList,
+          recentlyOrdered: parsed.recentlyOrdered ?? d.recentlyOrdered,
         }));
         if (parsed.profile) {
           setProfile((p) => ({ ...p, ...parsed.profile }));
