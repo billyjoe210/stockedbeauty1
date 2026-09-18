@@ -1198,7 +1198,7 @@ function BottomNav({ view, setView }) {
   return (
     <div className="show-mobile-nav" style={{
       position: "fixed", bottom: 0, left: 0, right: 0, background: `color-mix(in srgb, ${COLORS.bg} 85%, transparent)`, backdropFilter: "blur(10px)",
-      borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: "9px 6px calc(env(safe-area-inset-bottom,0px) + 9px)",
+      borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: "9px 6px calc(env(safe-area-inset-bottom,0px) + 4px)",
       zIndex: 50,
     }}>
       <style>{`@media (min-width: 900px) { .show-mobile-nav { display: none !important; } }`}</style>
