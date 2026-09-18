@@ -1319,7 +1319,14 @@ function BottomNav({ view, setView }) {
             display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "4px 10px",
             borderRadius: 18, cursor: "pointer", color: active ? COLORS.mocha : COLORS.inkSoft, minWidth: 54,
           }}>
-            <Icon size={20} strokeWidth={active ? 2.3 : 1.8} />
+            <div style={{
+              width: 34, height: 34, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center",
+              background: active ? `color-mix(in srgb, ${COLORS.mocha} 18%, transparent)` : "transparent",
+              boxShadow: active ? `0 0 14px color-mix(in srgb, ${COLORS.mocha} 55%, transparent)` : "none",
+              transition: "background 0.25s ease, box-shadow 0.25s ease",
+            }}>
+              <Icon size={20} strokeWidth={active ? 2.3 : 1.8} />
+            </div>
             <span className="sb-display" style={{ fontSize: 10.5, fontWeight: active ? 800 : 600 }}>{n.label}</span>
           </div>
         );
