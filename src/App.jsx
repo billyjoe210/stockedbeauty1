@@ -6,7 +6,7 @@ import {
   Trash2, Pencil, ArrowLeft, DollarSign, Sparkles, Filter, SlidersHorizontal,
   ArrowUpRight, ArrowDownRight, Package2, Droplets, Calendar, Store, User,
   LogOut, ChevronDown, Camera, Copy, History, PackageX, CircleAlert, Menu,
-  BarChart3, PiggyBank, Repeat, CheckCircle2, TriangleAlert
+  BarChart3, PiggyBank, Repeat, CheckCircle2, TriangleAlert, Moon
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -22,28 +22,71 @@ import {
 ============================================================================ */
 
 const COLORS = {
-  bg: "#FFFFFF",
-  tint: "#FAF6F1",
-  card: "#FFFFFF",
-  cardAlt: "#F5EFE7",
-  ink: "#2A241F",
-  inkSoft: "#6B6259",
-  line: "#E9E0D5",
-  mocha: "#8B6B54",
-  rose: "#C48B7F",
-  sage: "#899C7E",
-  champagne: "#C9A45C",
-  critical: "#B4574A",
-  warn: "#C08A3E",
-  good: "#7C9770",
+  bg: "var(--sb-bg)",
+  tint: "var(--sb-tint)",
+  card: "var(--sb-card)",
+  cardAlt: "var(--sb-card-alt)",
+  ink: "var(--sb-ink)",
+  inkSoft: "var(--sb-ink-soft)",
+  line: "var(--sb-line)",
+  mocha: "var(--sb-accent)",
+  rose: "var(--sb-accent-2)",
+  sage: "var(--sb-sage)",
+  champagne: "var(--sb-champagne)",
+  critical: "var(--sb-critical)",
+  warn: "var(--sb-warn)",
+  good: "var(--sb-good)",
 };
 
-const CARD_GRADIENT = `linear-gradient(180deg, #FFFFFF 0%, ${COLORS.tint} 100%)`;
+// Default light-mode values and dark-mode overrides for every color token
+// above, plus the default accent pair (the "peach/salmon" mocha/rose tones).
+// Accent stays user-customizable in Settings and applies in both themes;
+// everything else swaps automatically when dark mode is toggled.
+const DEFAULT_ACCENT = "#8B6B54";
+const DEFAULT_ACCENT_2 = "#C48B7F";
+
+const THEME_VARS = {
+  light: {
+    "--sb-bg": "#FFFFFF", "--sb-tint": "#FAF6F1", "--sb-card": "#FFFFFF", "--sb-card-alt": "#F5EFE7",
+    "--sb-ink": "#2A241F", "--sb-ink-soft": "#6B6259", "--sb-line": "#E9E0D5",
+    "--sb-sage": "#899C7E", "--sb-champagne": "#C9A45C",
+    "--sb-critical": "#B4574A", "--sb-warn": "#C08A3E", "--sb-good": "#7C9770",
+  },
+  dark: {
+    "--sb-bg": "#18100C", "--sb-tint": "#221812", "--sb-card": "#1F1712", "--sb-card-alt": "#2A2019",
+    "--sb-ink": "#F3EDE6", "--sb-ink-soft": "#B7A99B", "--sb-line": "#3B2E24",
+    "--sb-sage": "#A9BE9E", "--sb-champagne": "#DDC17F",
+    "--sb-critical": "#E28E80", "--sb-warn": "#E0B15E", "--sb-good": "#9CBE8F",
+  },
+};
+
+// Blend a hex color toward white by a ratio — used to derive the lighter
+// "second stop" accent (rose) from whatever base accent color the user picks.
+function lightenHex(hex, ratio) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return DEFAULT_ACCENT_2;
+  const num = parseInt(m[1], 16);
+  const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
+  const mix = (c) => Math.round(c + (255 - c) * ratio);
+  return `#${[mix(r), mix(g), mix(b)].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+const CARD_GRADIENT = `linear-gradient(180deg, var(--sb-card) 0%, var(--sb-tint) 100%)`;
+
+function themeStyleBlock() {
+  const lightVars = Object.entries(THEME_VARS.light).map(([k, v]) => `${k}: ${v};`).join(" ");
+  const darkVars = Object.entries(THEME_VARS.dark).map(([k, v]) => `${k}: ${v};`).join(" ");
+  return `
+  .sb-root { ${lightVars} }
+  .sb-root[data-sb-theme="dark"] { ${darkVars} }
+  `;
+}
 
 const FONT_STYLE = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
   html, body { overflow-x: hidden; max-width: 100vw; }
-  .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background:${COLORS.bg}; color:${COLORS.ink}; letter-spacing: -0.01em; overflow-x: hidden; max-width: 100vw; }
+  ${themeStyleBlock()}
+  .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background: var(--sb-bg); color: var(--sb-ink); letter-spacing: -0.01em; overflow-x: hidden; max-width: 100vw; transition: background 0.25s ease, color 0.25s ease; }
   .sb-display { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
   .sb-numeral { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; font-variant-numeric: lining-nums; }
   .sb-scroll::-webkit-scrollbar { display:none; }
@@ -58,6 +101,10 @@ const FONT_STYLE = `
   .sb-count { transition: all 0.4s ease; }
   @keyframes sbSpin { to { transform: rotate(360deg); } }
   .sb-spin { animation: sbSpin 0.8s linear infinite; }
+  input[type="color"] { -webkit-appearance: none; appearance: none; }
+  input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 13px; overflow: hidden; }
+  input[type="color"]::-webkit-color-swatch { border: none; }
+  input[type="color"]::-moz-color-swatch { border: none; border-radius: 13px; }
 `;
 
 /* ============================================================================
@@ -474,11 +521,11 @@ function stockStatus(item) {
 }
 
 const STATUS_META = {
-  healthy: { label: "Healthy", color: COLORS.good, bg: "#EEF3EA" },
-  low: { label: "Low Stock", color: COLORS.warn, bg: "#FBF1E1" },
-  critical: { label: "Critical", color: COLORS.critical, bg: "#FBEAE7" },
-  expired: { label: "Expired", color: COLORS.critical, bg: "#FBEAE7" },
-  expiring: { label: "Expiring Soon", color: COLORS.warn, bg: "#FBF1E1" },
+  healthy: { label: "Healthy", color: COLORS.good, bg: `color-mix(in srgb, ${COLORS.good} 16%, var(--sb-card))` },
+  low: { label: "Low Stock", color: COLORS.warn, bg: `color-mix(in srgb, ${COLORS.warn} 16%, var(--sb-card))` },
+  critical: { label: "Critical", color: COLORS.critical, bg: `color-mix(in srgb, ${COLORS.critical} 16%, var(--sb-card))` },
+  expired: { label: "Expired", color: COLORS.critical, bg: `color-mix(in srgb, ${COLORS.critical} 16%, var(--sb-card))` },
+  expiring: { label: "Expiring Soon", color: COLORS.warn, bg: `color-mix(in srgb, ${COLORS.warn} 16%, var(--sb-card))` },
 };
 
 function estimatedApptsRemaining(item) {
@@ -626,7 +673,7 @@ function Button({ children, onClick, variant = "primary", size = "md", style, di
     secondary: { background: COLORS.cardAlt, color: COLORS.ink, border: `1px solid ${COLORS.line}` },
     outline: { background: "transparent", color: COLORS.ink, border: `1.5px solid ${COLORS.ink}` },
     ghost: { background: "transparent", color: COLORS.inkSoft, border: "none" },
-    danger: { background: "#FBEAE7", color: COLORS.critical, border: "none" },
+    danger: { background: `color-mix(in srgb, ${COLORS.critical} 14%, var(--sb-card))`, color: COLORS.critical, border: "none" },
     accent: { background: COLORS.mocha, color: "#fff", border: "none" },
   };
   return (
@@ -665,7 +712,7 @@ function Field({ label, children, hint }) {
 
 const inputStyle = {
   width: "100%", padding: "11px 16px", borderRadius: 16, border: `1.5px solid ${COLORS.line}`,
-  fontSize: 14.5, fontFamily: "'Plus Jakarta Sans', sans-serif", background: "#fff", color: COLORS.ink, outline: "none",
+  fontSize: 14.5, fontFamily: "'Plus Jakarta Sans', sans-serif", background: COLORS.card, color: COLORS.ink, outline: "none",
   boxSizing: "border-box",
 };
 
@@ -962,21 +1009,33 @@ export default function App() {
     setView("home");
   };
 
+  const themeMode = profile.theme === "dark" ? "dark" : "light";
+  const accentColor = profile.accentColor || DEFAULT_ACCENT;
+  // Preserve the exact current look until the user actually picks a custom
+  // color — only derive the lighter second gradient stop algorithmically
+  // once they've moved off the default, so "default" stays pixel-identical
+  // to what shipped before this feature.
+  const accentColor2 = (profile.accentColor && profile.accentColor.toLowerCase() !== DEFAULT_ACCENT.toLowerCase())
+    ? lightenHex(accentColor, 0.35)
+    : DEFAULT_ACCENT_2;
+  const rootVars = { "--sb-accent": accentColor, "--sb-accent-2": accentColor2 };
+  const toggleTheme = () => setProfile((p) => ({ ...p, theme: p.theme === "dark" ? "light" : "dark" }));
+
   if (!loaded) {
-    return <div className="sb-root" style={{ minHeight: "100vh" }}><style>{FONT_STYLE}</style></div>;
+    return <div className="sb-root" data-sb-theme={themeMode} style={{ minHeight: "100vh", ...rootVars }}><style>{FONT_STYLE}</style></div>;
   }
 
   if (!onboarded || !data) {
-    return <div className="sb-root"><style>{FONT_STYLE}</style><Onboarding onComplete={completeOnboarding} /></div>;
+    return <div className="sb-root" data-sb-theme={themeMode} style={rootVars}><style>{FONT_STYLE}</style><Onboarding onComplete={completeOnboarding} /></div>;
   }
 
   return (
-    <div className="sb-root" style={{ minHeight: "100vh" }}>
+    <div className="sb-root" data-sb-theme={themeMode} style={{ minHeight: "100vh", ...rootVars }}>
       <style>{FONT_STYLE}</style>
       <div style={{ display: "flex" }}>
         <SidebarNav view={view} setView={setView} profile={profile} />
         <div style={{ flex: 1, minWidth: 0, paddingBottom: 88 }}>
-          <TopBar profile={profile} view={view} onReset={async () => {
+          <TopBar profile={profile} view={view} setView={setView} themeMode={themeMode} onToggleTheme={toggleTheme} onReset={async () => {
             await storage.delete(STORAGE_KEY).catch(() => {});
             setOnboarded(false); setData(null);
           }} />
@@ -1125,7 +1184,7 @@ function SidebarNav({ view, setView, profile }) {
 function BottomNav({ view, setView }) {
   return (
     <div className="show-mobile-nav" style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(10px)",
+      position: "fixed", bottom: 0, left: 0, right: 0, background: `color-mix(in srgb, ${COLORS.bg} 85%, transparent)`, backdropFilter: "blur(10px)",
       borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: "9px 6px calc(env(safe-area-inset-bottom,0px) + 9px)",
       zIndex: 50,
     }}>
@@ -1147,11 +1206,28 @@ function BottomNav({ view, setView }) {
   );
 }
 
-function TopBar({ profile, view, onReset }) {
+function Switch({ checked, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      aria-label="Toggle"
+      style={{
+        width: 42, height: 24, borderRadius: 999, border: "none", cursor: "pointer", padding: 3,
+        background: checked ? COLORS.mocha : COLORS.line, display: "flex", alignItems: "center",
+        justifyContent: checked ? "flex-end" : "flex-start", transition: "background 0.2s ease", flexShrink: 0,
+      }}
+    >
+      <span style={{ width: 18, height: 18, borderRadius: 999, background: "#fff", display: "block", boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }} />
+    </button>
+  );
+}
+
+function TopBar({ profile, view, setView, themeMode, onToggleTheme, onReset }) {
   const [open, setOpen] = useState(false);
   const titles = { home: "Home", inventory: "Inventory", services: "Services", reorder: "Reorder", insights: "Insights", settings: "Settings" };
   return (
-    <div style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,0.8)", backdropFilter: "blur(10px)", borderBottom: `1px solid ${COLORS.line}` }}>
+    <div style={{ position: "sticky", top: 0, zIndex: 20, background: `color-mix(in srgb, ${COLORS.bg} 80%, transparent)`, backdropFilter: "blur(10px)", borderBottom: `1px solid ${COLORS.line}` }}>
       <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div className="sb-display" style={{ fontSize: 17, fontWeight: 800 }}>{titles[view]}</div>
         <div style={{ position: "relative" }}>
@@ -1163,10 +1239,21 @@ function TopBar({ profile, view, onReset }) {
           </div>
           {open && (
             <div style={{
-              position: "absolute", right: 0, top: 42, background: "#fff", borderRadius: 22, border: `1px solid ${COLORS.line}`,
-              boxShadow: "0 10px 30px rgba(0,0,0,0.12)", width: 200, padding: 10, zIndex: 30,
+              position: "absolute", right: 0, top: 42, background: COLORS.card, borderRadius: 22, border: `1px solid ${COLORS.line}`,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.12)", width: 220, padding: 10, zIndex: 30,
             }}>
               <div style={{ padding: "8px 12px", fontSize: 12.5, color: COLORS.inkSoft }}>{profile.business}</div>
+              <div onClick={() => { setOpen(false); setView && setView("settings"); }} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, cursor: "pointer", fontSize: 13.5, fontWeight: 600,
+              }}>
+                <SettingsIcon size={15} /> Settings
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderRadius: 14 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, fontWeight: 600 }}>
+                  <Moon size={15} /> Dark Mode
+                </span>
+                <Switch checked={themeMode === "dark"} onChange={onToggleTheme} />
+              </div>
               <div onClick={() => { setOpen(false); onReset(); }} style={{
                 display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 999, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: COLORS.critical,
               }}>
@@ -1189,7 +1276,7 @@ function StatCard({ label, value, sub, icon: Icon, tone = COLORS.mocha, format =
     <Card style={{ padding: 18 }} hover={!!onClick} onClick={onClick}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.inkSoft, textTransform: "uppercase", letterSpacing: 0.4 }} className="sb-display">{label}</div>
-        <div style={{ width: 32, height: 32, borderRadius: 999, background: `${tone}1A`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ width: 32, height: 32, borderRadius: 999, background: `color-mix(in srgb, ${tone} 12%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <Icon size={15} color={tone} strokeWidth={2} />
         </div>
       </div>
@@ -1259,7 +1346,7 @@ function HomeView({ data, setData, profile, setView, showToast }) {
       {attention.length === 0 ? (
         <Card style={{ padding: 22, marginBottom: 26 }} hover={false}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 999, background: "#EEF3EA", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 40, height: 40, borderRadius: 999, background: `color-mix(in srgb, ${COLORS.good} 16%, var(--sb-card))`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <CheckCircle2 size={19} color={COLORS.good} />
             </div>
             <div>
@@ -1485,7 +1572,7 @@ function SmallSelect({ value, onChange, options, prefix = "" }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="sb-display" style={{
       padding: "7px 26px 7px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: `1px solid ${COLORS.line}`,
-      background: "#fff", color: COLORS.inkSoft, cursor: "pointer", flexShrink: 0,
+      background: COLORS.card, color: COLORS.inkSoft, cursor: "pointer", flexShrink: 0,
     }}>
       {options.map((o) => <option key={o} value={o}>{prefix}{o}</option>)}
     </select>
@@ -1551,7 +1638,7 @@ function QuickAddModal({ open, onClose, onPick, inventory }) {
 function QuickAction({ icon: Icon, label, sub, onClick }) {
   return (
     <div onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 13, padding: 16, borderRadius: 22, border: `1px solid ${COLORS.line}`, cursor: "pointer", background: "#fff",
+      display: "flex", alignItems: "center", gap: 13, padding: 16, borderRadius: 22, border: `1px solid ${COLORS.line}`, cursor: "pointer", background: COLORS.card,
     }}>
       <div style={{ width: 40, height: 40, borderRadius: 999, background: COLORS.cardAlt, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Icon size={17} color={COLORS.mocha} />
@@ -1741,7 +1828,7 @@ function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
           onClick={() => fileInputRef.current?.click()}
           title={`Scan a label to fill in the ${fieldName}`}
           style={{
-            width: 46, height: 46, borderRadius: 14, border: `1.5px solid ${COLORS.line}`, background: "#fff",
+            width: 46, height: 46, borderRadius: 14, border: `1.5px solid ${COLORS.line}`, background: COLORS.card,
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
           }}
         >
@@ -2098,7 +2185,7 @@ function LogServiceModal({ open, preset, services, inventory, onClose, onComplet
       ) : (
         <div className="sb-fade-up">
           <div style={{ textAlign: "center", marginBottom: 20 }}>
-            <div style={{ width: 52, height: 52, borderRadius: 999, background: "#EEF3EA", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
+            <div style={{ width: 52, height: 52, borderRadius: 999, background: `color-mix(in srgb, ${COLORS.good} 16%, var(--sb-card))`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
               <CheckCircle2 size={26} color={COLORS.good} />
             </div>
             <div className="sb-display" style={{ fontSize: 17, fontWeight: 800 }}>{svc?.name} completed</div>
@@ -2148,7 +2235,7 @@ function GlobalFab({ onClick }) {
           width: 56, height: 56, borderRadius: 999, border: "none", cursor: "pointer",
           background: `linear-gradient(135deg, ${COLORS.mocha}, ${COLORS.rose})`,
           display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 10px 26px rgba(139,107,84,0.4)", zIndex: 55,
+          boxShadow: `0 10px 26px color-mix(in srgb, ${COLORS.mocha} 40%, transparent)`, zIndex: 55,
           transform: pressed ? "scale(0.92)" : "scale(1)", transition: "transform 0.15s ease",
         }}
       >
@@ -2359,7 +2446,7 @@ function ReorderView({ data, setData, showToast }) {
 function QtyBtn({ children, onClick }) {
   return (
     <button onClick={onClick} style={{
-      width: 26, height: 26, borderRadius: 999, border: `1px solid ${COLORS.line}`, background: "#fff",
+      width: 26, height: 26, borderRadius: 999, border: `1px solid ${COLORS.line}`, background: COLORS.card,
       cursor: "pointer", fontSize: 15, fontWeight: 700, color: COLORS.ink, display: "flex", alignItems: "center", justifyContent: "center",
     }}>{children}</button>
   );
@@ -2412,6 +2499,11 @@ function InsightsView({ data, profile, setView }) {
   const hour = 9;
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 
+  const firstName = profile?.name?.split(" ")[0] || "there";
+  const greetOptions = useMemo(() => [firstName, "Beautiful", "Gorgeous", "Superstar", "Boss Babe", "Stunning"], [firstName]);
+  const [greetIdx, setGreetIdx] = useState(0);
+  const greetName = greetOptions[greetIdx % greetOptions.length];
+
   const marginRanked = useMemo(() => {
     return services.map((s) => ({ ...s, ...serviceMargin(s, inventory) })).sort((a, b) => b.margin - a.margin);
   }, [services, inventory]);
@@ -2453,8 +2545,19 @@ function InsightsView({ data, profile, setView }) {
   return (
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60 }}>
       <div style={{ marginBottom: 28 }}>
-        <div className="sb-display" style={{ fontSize: 30, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.01em" }}>
-          {greeting}, {profile?.name?.split(" ")[0] || "there"}.
+        <div className="sb-display" style={{ fontSize: 30, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>{greeting}, {greetName}</span>
+          <button
+            type="button"
+            onClick={() => setGreetIdx((i) => i + 1)}
+            title="Shuffle greeting"
+            style={{
+              width: 30, height: 30, borderRadius: 999, border: `1.5px solid ${COLORS.line}`, background: COLORS.card,
+              display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+            }}
+          >
+            <Repeat size={14} color={COLORS.mocha} />
+          </button>
         </div>
         <div style={{ fontSize: 15, color: COLORS.inkSoft, lineHeight: 1.5 }}>
           {isFresh ? (
@@ -2723,7 +2826,33 @@ function SettingsView({ data, setData, profile, setProfile, showToast, onReset }
         </div>
       </Card>
 
-      <SectionHeader title="Categories" />
+      <SectionHeader title="Theme" />
+      <Card style={{ padding: 18, marginBottom: 22 }} hover={false}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
+            <input
+              type="color"
+              value={profile.accentColor || DEFAULT_ACCENT}
+              onChange={(e) => setProfile((p) => ({ ...p, accentColor: e.target.value }))}
+              style={{
+                width: 52, height: 52, border: `2px solid ${COLORS.line}`, borderRadius: 16,
+                padding: 0, cursor: "pointer", background: "none", appearance: "none",
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 3 }}>Accent Color</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>Tap the swatch to pick any color from the wheel — it applies to buttons, icons, and highlights throughout the app.</div>
+          </div>
+        </div>
+        {(profile.accentColor && profile.accentColor.toLowerCase() !== DEFAULT_ACCENT.toLowerCase()) && (
+          <div style={{ marginTop: 14 }}>
+            <Button size="sm" variant="secondary" onClick={() => setProfile((p) => ({ ...p, accentColor: DEFAULT_ACCENT }))}>Reset to default</Button>
+          </div>
+        )}
+      </Card>
+
+
       <Card style={{ padding: 18, marginBottom: 22 }} hover={false}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
           {categories.map((c) => (
