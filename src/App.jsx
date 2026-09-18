@@ -1181,7 +1181,7 @@ export default function App() {
 
       {quickAction === "inventory" && (
         <ItemFormModal
-          open item={null} categories={data.categories} suppliers={data.suppliers}
+          open item={null} categories={data.categories} suppliers={data.suppliers} inventory={data.inventory}
           onClose={() => setQuickAction(null)}
           onSave={(item) => {
             setData((d) => ({ ...d, inventory: [...d.inventory, item] }));
@@ -1661,6 +1661,7 @@ function InventoryView({ data, setData, showToast }) {
         item={editing}
         categories={categories}
         suppliers={suppliers}
+        inventory={inventory}
         onClose={() => { setShowForm(false); setEditing(null); }}
         onSave={saveItem}
         onDelete={editing ? () => deleteItem(editing.id) : null}
@@ -1891,7 +1892,7 @@ function looksLikeText(line) {
 // characters, which was a common source of the remaining garbled results.
 const OCR_CHAR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,'&/%-+";
 
-function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
+function ScanTextField({ label, value, onChange, placeholder, fieldName, suggestions }) {
   const fileInputRef = useRef(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -1906,7 +1907,15 @@ function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
     try {
       const Tesseract = await loadTesseract();
       const processed = await preprocessImageForOCR(file);
-      worker = await Tesseract.createWorker("eng");
+      worker = await Tesseract.createWorker("eng", 1, {
+        // The "best" trained model (vs. the default "fast" one) is a
+        // noticeably larger, more accurate LSTM model — meaningfully better
+        // at handling font variation, at the cost of a slower scan. Genuine
+        // connected cursive/script is still a much harder problem than
+        // printed text for any OCR engine, but this gives it the best
+        // realistic shot without needing a cloud OCR service.
+        langPath: "https://tessdata.projectnaptha.com/4.0.0_best",
+      });
       await worker.setParameters({
         tessedit_char_whitelist: OCR_CHAR_WHITELIST,
         preserve_interword_spaces: "1",
@@ -1944,7 +1953,7 @@ function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
   return (
     <Field label={label}>
       <div style={{ display: "flex", gap: 8 }}>
-        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={{ flex: 1 }} />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={{ flex: 1 }} list={suggestions?.length ? `sb-suggest-${fieldName.replace(/\s+/g, "-")}` : undefined} />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
@@ -1957,12 +1966,17 @@ function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
           <Camera size={18} color={COLORS.mocha} />
         </button>
       </div>
+      {!!suggestions?.length && (
+        <datalist id={`sb-suggest-${fieldName.replace(/\s+/g, "-")}`}>
+          {suggestions.map((s) => <option key={s} value={s} />)}
+        </datalist>
+      )}
       <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFile} />
 
       {scanning && (
         <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: COLORS.inkSoft }}>
           <span className="sb-spin" style={{ width: 14, height: 14, borderRadius: 999, border: `2px solid ${COLORS.line}`, borderTopColor: COLORS.mocha, display: "inline-block" }} />
-          Reading the label — this can take a few seconds…
+          Reading the label — this can take 10–15 seconds…
         </div>
       )}
 
@@ -1988,7 +2002,7 @@ function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
   );
 }
 
-function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onDelete }) {
+function ItemFormModal({ open, item, categories, suppliers, inventory = [], onClose, onSave, onDelete }) {
   const blank = () => ({
     id: uid("inv"), name: "", brand: "", category: categories[0]?.name || "Other", unitType: "unit",
     quantity: 0, purchasePrice: 0, purchaseQty: 1, unitCost: 0, supplierId: suppliers[0]?.id || "",
@@ -2001,6 +2015,12 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
   if (!open) return null;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const isLashTray = form.category === "Lash Trays";
+  // Names/brands already typed in once (whether by OCR or by hand) become
+  // autocomplete suggestions — handy for cursive/stylized brand names,
+  // since they only need to be read accurately once and can be picked from
+  // the list on every repeat purchase after that.
+  const nameSuggestions = [...new Set(inventory.map((i) => i.name).filter(Boolean))];
+  const brandSuggestions = [...new Set(inventory.map((i) => i.brand).filter(Boolean))];
 
   const handleSave = () => {
     const purchasePrice = parseFloat(form.purchasePrice) || 0;
@@ -2011,9 +2031,9 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
 
   return (
     <Modal open={open} onClose={onClose} title={item ? "Edit Product" : "Add Product"} width={560}>
-      <ScanTextField label="Product Name" fieldName="product name" placeholder="e.g. 11mm CC 0.05 Lash Tray" value={form.name} onChange={(v) => set("name", v)} />
+      <ScanTextField label="Product Name" fieldName="product name" placeholder="e.g. 11mm CC 0.05 Lash Tray" value={form.name} onChange={(v) => set("name", v)} suggestions={nameSuggestions} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <ScanTextField label="Brand" fieldName="brand" placeholder="Brand" value={form.brand} onChange={(v) => set("brand", v)} />
+        <ScanTextField label="Brand" fieldName="brand" placeholder="Brand" value={form.brand} onChange={(v) => set("brand", v)} suggestions={brandSuggestions} />
         <Field label="Category">
           <Select value={form.category} onChange={(e) => set("category", e.target.value)}>
             {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
