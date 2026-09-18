@@ -84,7 +84,7 @@ function themeStyleBlock() {
 
 const FONT_STYLE = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-  html, body { overflow-x: hidden; max-width: 100vw; min-height: 100vh; min-height: 100dvh; }
+  html, body { overflow-x: hidden; max-width: 100vw; }
   ${themeStyleBlock()}
   .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background: var(--sb-bg); color: var(--sb-ink); letter-spacing: -0.01em; overflow-x: hidden; max-width: 100vw; transition: background 0.25s ease, color 0.25s ease; }
   .sb-display { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
@@ -92,7 +92,7 @@ const FONT_STYLE = `
   .sb-scroll::-webkit-scrollbar { display:none; }
   .sb-scroll { -ms-overflow-style:none; scrollbar-width:none; }
   .sb-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .sb-onboard-screen { height: 100vh; height: 100dvh; overflow-y: auto; }
+  .sb-onboard-screen { height: 100vh; height: 100dvh; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
   div, span, p, a { min-width: 0; }
   @keyframes sbFadeUp { from { opacity:0; transform: translateY(8px);} to {opacity:1; transform:translateY(0);} }
   @keyframes sbPop { from { opacity:0; transform: scale(0.96);} to {opacity:1; transform:scale(1);} }
@@ -1241,7 +1241,7 @@ function TopBar({ profile, view, setView, themeMode, onToggleTheme, onReset }) {
   const titles = { home: "Home", inventory: "Inventory", services: "Services", reorder: "Reorder", insights: "Insights", settings: "Settings" };
   return (
     <div style={{ position: "sticky", top: 0, zIndex: 20, background: `color-mix(in srgb, ${COLORS.bg} 80%, transparent)`, backdropFilter: "blur(10px)", borderBottom: `1px solid ${COLORS.line}` }}>
-      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "16px 16px", paddingTop: "calc(16px + env(safe-area-inset-top, 0px))", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div className="sb-display" style={{ fontSize: 17, fontWeight: 800 }}>{titles[view]}</div>
         <div style={{ position: "relative" }}>
           <div onClick={() => setOpen((o) => !o)} style={{
