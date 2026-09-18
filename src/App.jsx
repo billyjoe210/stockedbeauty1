@@ -1585,13 +1585,14 @@ function loadTesseract() {
   return tesseractLoadPromise;
 }
 
-// Downscale + binarize before OCR. Raw, full-resolution phone photos (often
-// 3000px+, full color, with packaging texture and glare) are exactly what
-// makes Tesseract hallucinate symbol noise instead of words. A CSS filter
-// alone (grayscale/contrast) only softens that; real black-and-white
-// thresholding (Otsu's method — auto-picks the brightness cutoff that best
-// separates ink from background) is the single biggest lever for clean
-// printed text, so we compute that ourselves pixel-by-pixel.
+// Downscale + denoise + binarize before OCR. Raw, full-resolution phone
+// photos (often 3000px+, full color, with packaging texture, glare, and
+// JPEG compression speckle) are exactly what makes Tesseract garble
+// individual characters. A light blur first smooths out that pixel-level
+// noise so it doesn't get mistaken for stray marks; Otsu's method then
+// auto-picks the brightness cutoff that best separates ink from background
+// for a clean black-and-white result — together these are the two biggest
+// levers for accurate printed-text OCR.
 function preprocessImageForOCR(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1611,15 +1612,34 @@ function preprocessImageForOCR(file) {
       const imgData = ctx.getImageData(0, 0, w, h);
       const d = imgData.data;
       const n = w * h;
-      const gray = new Uint8ClampedArray(n);
-      const hist = new Array(256).fill(0);
+
+      // Grayscale.
+      const gray = new Float32Array(n);
       for (let p = 0, i = 0; p < n; p++, i += 4) {
-        const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        gray[p] = g;
-        hist[g | 0]++;
+        gray[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
       }
+
+      // Light 3x3 box blur to smooth out single-pixel JPEG/sensor noise
+      // (a common cause of one-off garbled characters) without softening
+      // real letter strokes much.
+      const blurred = new Float32Array(n);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          let sum = 0, count = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const ny = y + dy, nx = x + dx;
+              if (ny >= 0 && ny < h && nx >= 0 && nx < w) { sum += gray[ny * w + nx]; count++; }
+            }
+          }
+          blurred[y * w + x] = sum / count;
+        }
+      }
+
       // Otsu's method: find the threshold that minimizes combined
       // within-class variance between "ink" and "background" pixels.
+      const hist = new Array(256).fill(0);
+      for (let p = 0; p < n; p++) hist[blurred[p] | 0]++;
       let sum = 0;
       for (let t = 0; t < 256; t++) sum += t * hist[t];
       let sumB = 0, wB = 0, varMax = -1, threshold = 128;
@@ -1635,7 +1655,7 @@ function preprocessImageForOCR(file) {
         if (between > varMax) { varMax = between; threshold = t; }
       }
       for (let p = 0, i = 0; p < n; p++, i += 4) {
-        const v = gray[p] > threshold ? 255 : 0;
+        const v = blurred[p] > threshold ? 255 : 0;
         d[i] = d[i + 1] = d[i + 2] = v;
       }
       ctx.putImageData(imgData, 0, 0);
@@ -1652,11 +1672,17 @@ function preprocessImageForOCR(file) {
 // ratio of letters/digits/spaces to total characters.
 function looksLikeText(line) {
   const letters = (line.match(/[A-Za-z]/g) || []).length;
-  const alnumOrSpace = (line.match(/[A-Za-z0-9 .\-'&]/g) || []).length;
+  const alnumOrSpace = (line.match(/[A-Za-z0-9 .\-'&/%]/g) || []).length;
   return letters >= 2 && alnumOrSpace / line.length >= 0.7;
 }
 
-function ScanNameField({ value, onChange }) {
+// Product-label text is almost always plain letters, numbers, and a small
+// set of punctuation — restricting Tesseract's output to that set stops it
+// from "reading" packaging texture or icons as stray symbols/accented
+// characters, which was a common source of the remaining garbled results.
+const OCR_CHAR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,'&/%-+";
+
+function ScanTextField({ label, value, onChange, placeholder, fieldName }) {
   const fileInputRef = useRef(null);
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -1672,14 +1698,18 @@ function ScanNameField({ value, onChange }) {
       const Tesseract = await loadTesseract();
       const processed = await preprocessImageForOCR(file);
       worker = await Tesseract.createWorker("eng");
+      await worker.setParameters({
+        tessedit_char_whitelist: OCR_CHAR_WHITELIST,
+        preserve_interword_spaces: "1",
+      });
 
-      // Run two passes with different layout assumptions and merge the
+      // Run three passes with different layout assumptions and merge the
       // results — "sparse text" (find scattered words anywhere) can
       // actually fragment one clean bold line worse than "uniform block"
-      // (assume it's all one block of text) would, and vice versa
-      // depending on the label. Trying both and combining catches more.
+      // or "single line" would, and vice versa depending on the label.
+      // Trying all three and combining catches more than any one alone.
       const allLines = [];
-      for (const psm of ["6", "11"]) {
+      for (const psm of ["6", "7", "11"]) {
         await worker.setParameters({ tessedit_pageseg_mode: psm });
         const { data } = await worker.recognize(processed);
         (data?.text || "")
@@ -1703,13 +1733,13 @@ function ScanNameField({ value, onChange }) {
   };
 
   return (
-    <Field label="Product Name">
+    <Field label={label}>
       <div style={{ display: "flex", gap: 8 }}>
-        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. 11mm CC 0.05 Lash Tray" style={{ flex: 1 }} />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={{ flex: 1 }} />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          title="Scan a label with your camera"
+          title={`Scan a label to fill in the ${fieldName}`}
           style={{
             width: 46, height: 46, borderRadius: 14, border: `1.5px solid ${COLORS.line}`, background: "#fff",
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
@@ -1731,7 +1761,7 @@ function ScanNameField({ value, onChange }) {
 
       {scanLines.length > 0 && (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11.5, color: COLORS.inkSoft, marginBottom: 7 }}>Tap the line that's the product name:</div>
+          <div style={{ fontSize: 11.5, color: COLORS.inkSoft, marginBottom: 7 }}>Tap the line that's the {fieldName}:</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {scanLines.map((line, i) => (
               <button
@@ -1772,9 +1802,9 @@ function ItemFormModal({ open, item, categories, suppliers, onClose, onSave, onD
 
   return (
     <Modal open={open} onClose={onClose} title={item ? "Edit Product" : "Add Product"} width={560}>
-      <ScanNameField value={form.name} onChange={(v) => set("name", v)} />
+      <ScanTextField label="Product Name" fieldName="product name" placeholder="e.g. 11mm CC 0.05 Lash Tray" value={form.name} onChange={(v) => set("name", v)} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
-        <Field label="Brand"><Input value={form.brand} onChange={(e) => set("brand", e.target.value)} placeholder="Brand" /></Field>
+        <ScanTextField label="Brand" fieldName="brand" placeholder="Brand" value={form.brand} onChange={(v) => set("brand", v)} />
         <Field label="Category">
           <Select value={form.category} onChange={(e) => set("category", e.target.value)}>
             {categories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
