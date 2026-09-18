@@ -199,10 +199,12 @@ const uid = (p = "id") => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 
 // iOS Safari sometimes reports env(safe-area-inset-bottom) as 0 on first
 // paint and only finalizes the real value after the browser is forced to
-// relayout — which is exactly why rotating the phone "fixes" it. Reading it
-// purely in CSS can't work around that, so we measure it with a hidden
-// probe element instead, and re-measure on the next couple of frames plus
-// any viewport/orientation change to reliably catch the late-settling value.
+// relayout — which can happen on rotation, but on some iOS versions only
+// happens after the first scroll/touch gesture on the page. Reading it
+// purely in CSS can't work around either case, so we measure it with a
+// hidden probe element instead: a short burst of polling right after mount
+// catches most cases without needing any specific gesture, and scroll/touch/
+// resize/orientation listeners catch it if it only settles later.
 function useSafeAreaBottom() {
   const [inset, setInset] = useState(0);
   useEffect(() => {
@@ -216,20 +218,35 @@ function useSafeAreaBottom() {
     measure();
     const raf1 = requestAnimationFrame(measure);
     const raf2 = requestAnimationFrame(() => requestAnimationFrame(measure));
-    const t1 = setTimeout(measure, 150);
-    const t2 = setTimeout(measure, 500);
+
+    // Poll for a couple seconds after mount — catches whatever mechanism
+    // iOS uses to finalize the value without needing to guess the right
+    // event name for a given iOS version.
+    const pollTimers = [80, 160, 300, 500, 800, 1200, 1800, 2500].map((ms) => setTimeout(measure, ms));
+
+    const opts = { passive: true };
     window.addEventListener("resize", measure);
     window.addEventListener("orientationchange", measure);
+    window.addEventListener("scroll", measure, opts);
+    window.addEventListener("touchstart", measure, opts);
+    window.addEventListener("touchmove", measure, opts);
+    window.addEventListener("touchend", measure, opts);
     window.visualViewport?.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("scroll", measure);
+
     return () => {
       document.body.removeChild(probe);
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
-      clearTimeout(t1);
-      clearTimeout(t2);
+      pollTimers.forEach(clearTimeout);
       window.removeEventListener("resize", measure);
       window.removeEventListener("orientationchange", measure);
+      window.removeEventListener("scroll", measure, opts);
+      window.removeEventListener("touchstart", measure, opts);
+      window.removeEventListener("touchmove", measure, opts);
+      window.removeEventListener("touchend", measure, opts);
       window.visualViewport?.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("scroll", measure);
     };
   }, []);
   return inset;
