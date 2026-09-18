@@ -227,22 +227,30 @@ function useSafeAreaBottom(elementRef) {
       setInset((prev) => (val !== prev ? val : prev));
     };
 
-    const nudgeRepaint = () => {
-      const el = elementRef?.current;
+    // Toggling an element's own position from fixed→static→fixed forces
+    // WebKit to recreate that element's fixed-position layer from scratch,
+    // which is what actually forces a fresh env(safe-area-inset-*)
+    // resolution for it — a plain style read alone can still return a
+    // stale cached value. We do this to the invisible probe itself (so the
+    // *measurement* is accurate) and to the visible element (so its own
+    // on-screen layer isn't stuck stale either).
+    const nudgeElement = (el) => {
       if (!el) return;
       el.style.position = "static";
-      void el.offsetHeight; // force a synchronous layout pass before restoring
+      void el.offsetHeight;
       el.style.position = "fixed";
+    };
+    const settleOnce = () => {
+      nudgeElement(probe);
+      measure();
+      nudgeElement(elementRef?.current);
     };
 
     let pollTimers = [];
     const runSettleBurst = () => {
       pollTimers.forEach(clearTimeout);
-      measure();
-      nudgeRepaint();
-      pollTimers = [80, 160, 300, 500, 800, 1200, 1800, 2500].map((ms) =>
-        setTimeout(() => { measure(); nudgeRepaint(); }, ms)
-      );
+      settleOnce();
+      pollTimers = [80, 160, 300, 500, 800, 1200, 1800, 2500].map((ms) => setTimeout(settleOnce, ms));
     };
 
     runSettleBurst();
@@ -259,32 +267,37 @@ function useSafeAreaBottom(elementRef) {
     window.addEventListener("pageshow", onResume);
     window.addEventListener("focus", onResume);
 
+    // IMPORTANT: never do this work synchronously on every scroll/touchmove
+    // tick — that's a forced layout read (or worse, a position toggle) on
+    // every frame of an active scroll gesture, which is exactly what made
+    // scrolling stutter/lock up before. Only check once a gesture/scroll has
+    // actually finished (120ms after the last event).
+    let settleTimer = null;
+    const settleWhenIdle = () => {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(settleOnce, 120);
+    };
     const opts = { passive: true };
     window.addEventListener("resize", measure);
-    window.addEventListener("orientationchange", measure);
-    window.addEventListener("scroll", measure, opts);
-    window.addEventListener("touchstart", measure, opts);
-    window.addEventListener("touchmove", measure, opts);
-    window.addEventListener("touchend", measure, opts);
+    window.addEventListener("orientationchange", settleWhenIdle);
+    window.addEventListener("scroll", settleWhenIdle, opts);
+    window.addEventListener("touchend", settleWhenIdle, opts);
     window.visualViewport?.addEventListener("resize", measure);
-    window.visualViewport?.addEventListener("scroll", measure);
 
     return () => {
       document.body.removeChild(probe);
       cancelAnimationFrame(raf1);
       cancelAnimationFrame(raf2);
       pollTimers.forEach(clearTimeout);
+      clearTimeout(settleTimer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pageshow", onResume);
       window.removeEventListener("focus", onResume);
       window.removeEventListener("resize", measure);
-      window.removeEventListener("orientationchange", measure);
-      window.removeEventListener("scroll", measure, opts);
-      window.removeEventListener("touchstart", measure, opts);
-      window.removeEventListener("touchmove", measure, opts);
-      window.removeEventListener("touchend", measure, opts);
+      window.removeEventListener("orientationchange", settleWhenIdle);
+      window.removeEventListener("scroll", settleWhenIdle, opts);
+      window.removeEventListener("touchend", settleWhenIdle, opts);
       window.visualViewport?.removeEventListener("resize", measure);
-      window.visualViewport?.removeEventListener("scroll", measure);
     };
   }, []);
   return inset;
