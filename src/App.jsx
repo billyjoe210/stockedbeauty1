@@ -42,8 +42,8 @@ const COLORS = {
 // above, plus the default accent pair (the "peach/salmon" mocha/rose tones).
 // Accent stays user-customizable in Settings and applies in both themes;
 // everything else swaps automatically when dark mode is toggled.
-const DEFAULT_ACCENT = "#8B6B54";
-const DEFAULT_ACCENT_2 = "#C48B7F";
+const DEFAULT_ACCENT = "#E86D92";
+const DEFAULT_ACCENT_2 = "#F0A0B8";
 
 const THEME_VARS = {
   light: {
@@ -53,8 +53,8 @@ const THEME_VARS = {
     "--sb-critical": "#B4574A", "--sb-warn": "#C08A3E", "--sb-good": "#7C9770",
   },
   dark: {
-    "--sb-bg": "#18100C", "--sb-tint": "#221812", "--sb-card": "#1F1712", "--sb-card-alt": "#2A2019",
-    "--sb-ink": "#F3EDE6", "--sb-ink-soft": "#B7A99B", "--sb-line": "#3B2E24",
+    "--sb-bg": "#0B0B0C", "--sb-tint": "#17171A", "--sb-card": "#131314", "--sb-card-alt": "#1E1E20",
+    "--sb-ink": "#F0EFED", "--sb-ink-soft": "#A6A4A1", "--sb-line": "#2B2A2B",
     "--sb-sage": "#A9BE9E", "--sb-champagne": "#DDC17F",
     "--sb-critical": "#E28E80", "--sb-warn": "#E0B15E", "--sb-good": "#9CBE8F",
   },
@@ -84,7 +84,7 @@ function themeStyleBlock() {
 
 const FONT_STYLE = `
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-  html, body { overflow-x: hidden; max-width: 100vw; }
+  html, body { overflow-x: hidden; max-width: 100vw; min-height: 100vh; min-height: 100dvh; }
   ${themeStyleBlock()}
   .sb-root { font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif; background: var(--sb-bg); color: var(--sb-ink); letter-spacing: -0.01em; overflow-x: hidden; max-width: 100vw; transition: background 0.25s ease, color 0.25s ease; }
   .sb-display { font-family: 'Fraunces', ui-serif, Georgia, serif; font-optical-sizing: auto; letter-spacing: -0.01em; }
@@ -1020,6 +1020,19 @@ export default function App() {
     : DEFAULT_ACCENT_2;
   const rootVars = { "--sb-accent": accentColor, "--sb-accent-2": accentColor2 };
   const toggleTheme = () => setProfile((p) => ({ ...p, theme: p.theme === "dark" ? "light" : "dark" }));
+
+  // The status bar / Dynamic Island area sits outside our own .sb-root div —
+  // it's rendered over the real <html>/<body>, which otherwise stays
+  // whatever static color the page shell defaults to. Keep those in sync
+  // with the current theme so dark mode's background reaches the very top
+  // of the screen instead of cutting off below the notch.
+  useEffect(() => {
+    const bg = THEME_VARS[themeMode]["--sb-bg"];
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", bg);
+  }, [themeMode]);
 
   if (!loaded) {
     return <div className="sb-root" data-sb-theme={themeMode} style={{ minHeight: "100vh", ...rootVars }}><style>{FONT_STYLE}</style></div>;
@@ -2501,7 +2514,9 @@ function InsightsView({ data, profile, setView }) {
 
   const firstName = profile?.name?.split(" ")[0] || "there";
   const greetOptions = useMemo(() => [firstName, "Beautiful", "Gorgeous", "Superstar", "Boss Babe", "Stunning"], [firstName]);
-  const [greetIdx, setGreetIdx] = useState(0);
+  // A new playful greeting each time the app is opened — picked once per
+  // mount, not re-rolled on every render.
+  const [greetIdx] = useState(() => Math.floor(Math.random() * 6));
   const greetName = greetOptions[greetIdx % greetOptions.length];
 
   const marginRanked = useMemo(() => {
@@ -2545,19 +2560,8 @@ function InsightsView({ data, profile, setView }) {
   return (
     <div className="sb-fade-up" style={{ paddingTop: 18, paddingBottom: 60 }}>
       <div style={{ marginBottom: 28 }}>
-        <div className="sb-display" style={{ fontSize: 30, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span>{greeting}, {greetName}</span>
-          <button
-            type="button"
-            onClick={() => setGreetIdx((i) => i + 1)}
-            title="Shuffle greeting"
-            style={{
-              width: 30, height: 30, borderRadius: 999, border: `1.5px solid ${COLORS.line}`, background: COLORS.card,
-              display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
-            }}
-          >
-            <Repeat size={14} color={COLORS.mocha} />
-          </button>
+        <div className="sb-display" style={{ fontSize: 30, fontWeight: 800, marginBottom: 6, letterSpacing: "-0.01em" }}>
+          {greeting}, {greetName}.
         </div>
         <div style={{ fontSize: 15, color: COLORS.inkSoft, lineHeight: 1.5 }}>
           {isFresh ? (
