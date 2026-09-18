@@ -93,6 +93,7 @@ const FONT_STYLE = `
   .sb-scroll { -ms-overflow-style:none; scrollbar-width:none; }
   .sb-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .sb-onboard-screen { height: 100vh; height: 100dvh; overflow-y: auto; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
+  .sb-modal-sheet { max-height: 92vh; max-height: 92dvh; }
   div, span, p, a { min-width: 0; }
   @keyframes sbFadeUp { from { opacity:0; transform: translateY(8px);} to {opacity:1; transform:translateY(0);} }
   @keyframes sbPop { from { opacity:0; transform: scale(0.96);} to {opacity:1; transform:scale(1);} }
@@ -857,6 +858,38 @@ function Select(props) {
 }
 
 function Modal({ open, onClose, title, children, width = 520 }) {
+  // Lock the background page while the sheet is open — without this, an
+  // upward scroll gesture inside the modal can end up scrolling the page
+  // behind it instead (or both at once), which is exactly what produces
+  // that "snaps back down" fight when trying to scroll up to the top of a
+  // tall form. The fixed-position-with-stored-offset technique (rather
+  // than just overflow:hidden) is what reliably stops iOS Safari's
+  // background rubber-band scroll specifically.
+  useEffect(() => {
+    if (!open) return;
+    const scrollY = window.scrollY;
+    const prev = {
+      position: document.body.style.position, top: document.body.style.top,
+      left: document.body.style.left, right: document.body.style.right,
+      width: document.body.style.width, overflow: document.body.style.overflow,
+    };
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = "0";
+    document.body.style.right = "0";
+    document.body.style.width = "100%";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.position = prev.position;
+      document.body.style.top = prev.top;
+      document.body.style.left = prev.left;
+      document.body.style.right = prev.right;
+      document.body.style.width = prev.width;
+      document.body.style.overflow = prev.overflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
@@ -869,9 +902,9 @@ function Modal({ open, onClose, title, children, width = 520 }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="sb-pop sb-scroll"
+        className="sb-pop sb-scroll sb-modal-sheet"
         style={{
-          background: CARD_GRADIENT, width: "100%", maxWidth: width, maxHeight: "92vh", overflowY: "auto", overflowX: "hidden",
+          background: CARD_GRADIENT, width: "100%", maxWidth: width, overflowY: "auto", overflowX: "hidden",
           borderRadius: "30px 30px 0 0", padding: "24px 20px 30px", boxSizing: "border-box",
           position: "relative", left: 0, right: 0,
         }}
