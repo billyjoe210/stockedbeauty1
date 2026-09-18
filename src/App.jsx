@@ -205,10 +205,18 @@ const uid = (p = "id") => `${p}_${Math.random().toString(36).slice(2, 9)}`;
 //    both do, for the frosted-glass look) can get visually "stuck" in their
 //    old composited position when iOS restores a backgrounded app, even
 //    though the underlying CSS is already correct — a known WebKit quirk.
-//    Rotating or swiping forces WebKit to recompute it; we force the same
-//    recomputation automatically by nudging a transform on resume, via
-//    document.visibilitychange / pageshow.
-function useSafeAreaBottom() {
+//    Rotating or swiping forces WebKit to recompute it.
+//
+// IMPORTANT: forcing that recompute must never touch `transform` (or
+// `will-change: transform`, or `filter`) on an ANCESTOR of these elements —
+// doing so makes that ancestor become the positioning container for every
+// `position: fixed` descendant on the page instead of the real viewport,
+// which breaks fixed positioning everywhere (this was tried and made things
+// worse). Instead, we nudge only the specific element itself by briefly
+// toggling its own `position` between "fixed" and "static", which forces
+// WebKit to recreate that one element's fixed-position layer from scratch
+// without affecting anything else on the page.
+function useSafeAreaBottom(elementRef) {
   const [inset, setInset] = useState(0);
   useEffect(() => {
     const probe = document.createElement("div");
@@ -219,17 +227,12 @@ function useSafeAreaBottom() {
       setInset((prev) => (val !== prev ? val : prev));
     };
 
-    // Forces WebKit to recompute fixed-position + backdrop-filter layers —
-    // the standard workaround for the "stuck after resume" compositing bug.
     const nudgeRepaint = () => {
-      const prevTransform = document.body.style.transform;
-      const prevWillChange = document.body.style.willChange;
-      document.body.style.willChange = "transform";
-      document.body.style.transform = "translateZ(0.01px)";
-      requestAnimationFrame(() => {
-        document.body.style.transform = prevTransform;
-        requestAnimationFrame(() => { document.body.style.willChange = prevWillChange; });
-      });
+      const el = elementRef?.current;
+      if (!el) return;
+      el.style.position = "static";
+      void el.offsetHeight; // force a synchronous layout pass before restoring
+      el.style.position = "fixed";
     };
 
     let pollTimers = [];
@@ -1286,9 +1289,10 @@ function SidebarNav({ view, setView, profile }) {
 }
 
 function BottomNav({ view, setView }) {
-  const safeBottom = useSafeAreaBottom();
+  const navRef = useRef(null);
+  const safeBottom = useSafeAreaBottom(navRef);
   return (
-    <div className="show-mobile-nav" style={{
+    <div ref={navRef} className="show-mobile-nav" style={{
       position: "fixed", bottom: 0, left: 0, right: 0, background: `color-mix(in srgb, ${COLORS.bg} 85%, transparent)`, backdropFilter: "blur(10px)",
       borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: `9px 6px ${safeBottom + 4}px`,
       zIndex: 50,
@@ -2325,11 +2329,13 @@ function RowStat({ label, value, strong, color }) {
 
 function GlobalFab({ onClick }) {
   const [pressed, setPressed] = useState(false);
-  const safeBottom = useSafeAreaBottom();
+  const fabRef = useRef(null);
+  const safeBottom = useSafeAreaBottom(fabRef);
   return (
     <>
       <style>{`@media (min-width: 900px) { .sb-fab { bottom: 26px !important; } }`}</style>
       <button
+        ref={fabRef}
         onClick={onClick}
         onMouseDown={() => setPressed(true)}
         onMouseUp={() => setPressed(false)}
