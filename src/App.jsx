@@ -642,6 +642,17 @@ function estimatedApptsRemaining(item) {
   return item.quantity / item.avgUsagePerAppt;
 }
 
+// A fixed, always-pink notification color for the "just restocked" glow —
+// deliberately independent of the user's customizable accent color, since
+// it's a system indicator rather than a theme element.
+const RESTOCK_GLOW = "#FF4FA0";
+const RESTOCK_GLOW_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function isRecentlyRestocked(item) {
+  if (!item.restockedAt) return false;
+  return Date.now() - new Date(item.restockedAt).getTime() < RESTOCK_GLOW_WINDOW_MS;
+}
+
 function serviceCost(service, inventory) {
   return service.recipe.reduce((sum, r) => {
     const prod = inventory.find((i) => i.id === r.productId);
@@ -1716,8 +1727,22 @@ function InventoryCard({ item, onClick, suppliers }) {
   const appts = estimatedApptsRemaining(item);
   const meta = STATUS_META[status];
   const detail = item.category === "Lash Trays" ? `${item.length} · ${item.curl} · ${item.diameter}` : item.brand;
+  const justRestocked = isRecentlyRestocked(item);
   return (
-    <Card onClick={onClick} style={{ padding: 16 }}>
+    <Card onClick={onClick} style={{
+      padding: 16,
+      ...(justRestocked ? {
+        boxShadow: `0 0 0 2px ${RESTOCK_GLOW}, 0 0 18px color-mix(in srgb, ${RESTOCK_GLOW} 55%, transparent)`,
+      } : {}),
+    }}>
+      {justRestocked && (
+        <div className="sb-display" style={{
+          display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800,
+          color: "#fff", background: RESTOCK_GLOW, padding: "3px 9px", borderRadius: 999, marginBottom: 10,
+        }}>
+          <Sparkles size={10} /> Just Restocked
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
         <ShelfRing ratio={stockRatio(item)} color={meta.color} size={46}>
           <span className="sb-display" style={{ fontSize: 11, fontWeight: 800, color: meta.color }}>{Math.round(stockRatio(item) * 100)}%</span>
@@ -2459,12 +2484,19 @@ function RecordWasteModal({ open, inventory, onClose, onSave }) {
 function ReorderView({ data, setData, showToast }) {
   const { inventory, reorderList, suppliers, recentlyOrdered } = data;
 
+  // Items with a pending (unconfirmed) reorder shouldn't keep nagging from
+  // Critical/Low/Expiring — the order's already been placed. They come back
+  // into those lists only if a confirmed delivery didn't actually fix their
+  // stock/expiration (unlikely, but possible if someone edits things by hand).
+  const pendingProductIds = useMemo(() => new Set((recentlyOrdered || []).map((r) => r.productId)), [recentlyOrdered]);
+
   const recommendations = useMemo(() => {
     return inventory
       .map((item) => {
         const status = stockStatus(item);
         const appts = estimatedApptsRemaining(item);
         if (status === "healthy") return null;
+        if (pendingProductIds.has(item.id)) return null;
         const suggestedQty = Math.max(1, Math.ceil((item.reorderThreshold * 2 - item.quantity) / (item.purchaseQty >= 1 && item.unitType === "tray" ? 1 : 1)));
         return { item, status, appts, suggestedQty: item.unitType === "tray" ? Math.max(1, Math.ceil((item.reorderThreshold * 2.2 - item.quantity))) : Math.max(1, Math.ceil(item.reorderThreshold * 2 - item.quantity)) };
       })
@@ -2473,7 +2505,7 @@ function ReorderView({ data, setData, showToast }) {
         const rank = { expired: 0, critical: 1, expiring: 2, low: 3 };
         return rank[a.status] - rank[b.status];
       });
-  }, [inventory]);
+  }, [inventory, pendingProductIds]);
 
   const groups = {
     critical: recommendations.filter((r) => r.status === "critical" || r.status === "expired"),
@@ -2492,33 +2524,50 @@ function ReorderView({ data, setData, showToast }) {
     showToast(`Added ${item.name} to reorder list`);
   };
 
-  // One-tap "already reordered it" for an item straight from the
-  // Critical/Running Low/Expiring Soon lists — restocks it immediately
-  // (and, for an expiring item, treats it as a fresh replacement batch so
-  // it isn't still flagged as expiring) and logs it to Recently Ordered.
-  // Since Critical/Low/Expiring are computed live from current stock
-  // status, the item disappears from those sections automatically the
-  // moment its status is no longer critical/low/expiring.
+  // One-tap "I placed this order" for an item straight from the Critical/
+  // Running Low/Expiring Soon lists. This does NOT touch inventory yet —
+  // it just logs the order as pending, which is enough on its own to pull
+  // the item off those lists (see pendingProductIds above). Stock only
+  // actually gets added once the order is confirmed as received, below.
   const markReordered = (item, status, suggestedQty) => {
-    const today = new Date("2026-08-23T09:00:00");
-    const healthyQty = Math.max(item.quantity + suggestedQty, (item.reorderThreshold || 1) * 2.5);
-    const patch = { quantity: healthyQty };
-    if (status === "expiring" || status === "expired") {
-      const openedDate = item.dateOpened ? new Date(item.dateOpened) : today;
-      const oldExpiry = item.expirationDate ? new Date(item.expirationDate) : null;
-      const shelfLifeMs = oldExpiry && oldExpiry > openedDate ? oldExpiry - openedDate : 60 * 86400000;
-      patch.dateOpened = today.toISOString();
-      patch.expirationDate = new Date(today.getTime() + shelfLifeMs).toISOString();
-    }
     setData((d) => ({
       ...d,
-      inventory: d.inventory.map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
       recentlyOrdered: [
-        { id: uid("ro"), productId: item.id, productName: item.name, quantity: suggestedQty, reason: status, date: today.toISOString() },
+        { id: uid("ro"), productId: item.id, productName: item.name, quantity: suggestedQty, reason: status, date: new Date().toISOString() },
         ...d.recentlyOrdered,
       ].slice(0, 30),
     }));
     showToast(`${item.name} marked as reordered`);
+  };
+
+  // Confirms a pending order actually arrived: adds the stock to inventory
+  // (treating an expiring item as a fresh replacement batch), flags it with
+  // a 24-hour "just restocked" glow, and removes it from Recently Ordered —
+  // this is the step that makes the list actually go somewhere instead of
+  // only ever growing.
+  const confirmReceived = (entry) => {
+    setData((d) => {
+      const item = d.inventory.find((i) => i.id === entry.productId);
+      if (!item) {
+        return { ...d, recentlyOrdered: d.recentlyOrdered.filter((r) => r.id !== entry.id) };
+      }
+      const now = new Date();
+      const healthyQty = Math.max(item.quantity + (entry.quantity || 1), (item.reorderThreshold || 1) * 2.5);
+      const patch = { quantity: healthyQty, restockedAt: now.toISOString() };
+      if (entry.reason === "expiring" || entry.reason === "expired") {
+        const openedDate = item.dateOpened ? new Date(item.dateOpened) : now;
+        const oldExpiry = item.expirationDate ? new Date(item.expirationDate) : null;
+        const shelfLifeMs = oldExpiry && oldExpiry > openedDate ? oldExpiry - openedDate : 60 * 86400000;
+        patch.dateOpened = now.toISOString();
+        patch.expirationDate = new Date(now.getTime() + shelfLifeMs).toISOString();
+      }
+      return {
+        ...d,
+        inventory: d.inventory.map((i) => (i.id === item.id ? { ...i, ...patch } : i)),
+        recentlyOrdered: d.recentlyOrdered.filter((r) => r.id !== entry.id),
+      };
+    });
+    showToast(`${entry.productName} added back to inventory`);
   };
 
   const cartItems = reorderList.filter((r) => !r.purchased);
@@ -2530,22 +2579,19 @@ function ReorderView({ data, setData, showToast }) {
   const updateQty = (id, qty) => setData((d) => ({ ...d, reorderList: d.reorderList.map((r) => (r.id === id ? { ...r, quantity: Math.max(1, qty) } : r)) }));
   const removeItem = (id) => setData((d) => ({ ...d, reorderList: d.reorderList.filter((r) => r.id !== id) }));
   const markPurchased = (id) => {
-    const today = new Date("2026-08-23T09:00:00");
     setData((d) => {
       const target = d.reorderList.find((r) => r.id === id);
       const product = target ? d.inventory.find((i) => i.id === target.productId) : null;
-      const addedQty = target && product ? target.quantity * (product.unitType === "tray" || product.unitType === "bottle" ? 1 : (product.purchaseQty || 1)) : 0;
       return {
         ...d,
         reorderList: d.reorderList.map((r) => (r.id === id ? { ...r, purchased: true } : r)),
-        inventory: target ? d.inventory.map((i) => (i.id === target.productId ? { ...i, quantity: i.quantity + addedQty } : i)) : d.inventory,
         recentlyOrdered: product ? [
-          { id: uid("ro"), productId: product.id, productName: product.name, quantity: target.quantity, reason: "cart", date: today.toISOString() },
+          { id: uid("ro"), productId: product.id, productName: product.name, quantity: target.quantity, reason: "cart", date: new Date().toISOString() },
           ...d.recentlyOrdered,
         ].slice(0, 30) : d.recentlyOrdered,
       };
     });
-    showToast("Marked as purchased — inventory restocked");
+    showToast("Marked as purchased — confirm once it arrives");
   };
   const exportList = () => showToast("List exported (CSV download coming soon)");
 
@@ -2614,18 +2660,27 @@ function ReorderView({ data, setData, showToast }) {
       <div style={{ height: 8 }} />
       <SectionHeader title="Recently Ordered" />
       {(!recentlyOrdered || recentlyOrdered.length === 0) ? (
-        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, padding: "10px 2px" }}>Nothing reordered yet — mark an item above once you've placed the order.</div>
+        <div style={{ fontSize: 12.5, color: COLORS.inkSoft, padding: "10px 2px" }}>Nothing pending — mark an item above once you've placed the order.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 11.5, color: COLORS.inkSoft, padding: "0 2px 2px" }}>Tap the check once an order actually arrives to add it back into inventory.</div>
           {recentlyOrdered.map((r) => (
             <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 16px", background: COLORS.cardAlt, borderRadius: 18, fontSize: 13 }}>
               <div style={{ minWidth: 0 }}>
                 <div className="sb-truncate" style={{ fontWeight: 600, color: COLORS.ink }}>{r.productName}</div>
-                <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>{timeAgo(r.date)}</div>
+                <div style={{ fontSize: 11, color: COLORS.inkSoft, marginTop: 1 }}>Ordered {timeAgo(r.date)}</div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, color: COLORS.good }}>
-                <CheckCircle2 size={15} />
-              </div>
+              <button
+                onClick={() => confirmReceived(r)}
+                title="Mark as received — adds it back into inventory"
+                style={{
+                  width: 30, height: 30, borderRadius: 999, border: "none", cursor: "pointer", flexShrink: 0,
+                  background: `color-mix(in srgb, ${COLORS.good} 18%, transparent)`, color: COLORS.good,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <Check size={16} strokeWidth={2.6} />
+              </button>
             </div>
           ))}
         </div>
