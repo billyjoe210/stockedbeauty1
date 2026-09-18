@@ -196,6 +196,45 @@ const NAV = [
 ];
 
 const uid = (p = "id") => `${p}_${Math.random().toString(36).slice(2, 9)}`;
+
+// iOS Safari sometimes reports env(safe-area-inset-bottom) as 0 on first
+// paint and only finalizes the real value after the browser is forced to
+// relayout — which is exactly why rotating the phone "fixes" it. Reading it
+// purely in CSS can't work around that, so we measure it with a hidden
+// probe element instead, and re-measure on the next couple of frames plus
+// any viewport/orientation change to reliably catch the late-settling value.
+function useSafeAreaBottom() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;bottom:0;left:0;width:0;height:0;padding-bottom:env(safe-area-inset-bottom);visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    const measure = () => {
+      const val = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+      setInset((prev) => (val !== prev ? val : prev));
+    };
+    measure();
+    const raf1 = requestAnimationFrame(measure);
+    const raf2 = requestAnimationFrame(() => requestAnimationFrame(measure));
+    const t1 = setTimeout(measure, 150);
+    const t2 = setTimeout(measure, 500);
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    window.visualViewport?.addEventListener("resize", measure);
+    return () => {
+      document.body.removeChild(probe);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
+    };
+  }, []);
+  return inset;
+}
+
 const money = (n) => `$${(Math.round((n + Number.EPSILON) * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const money0 = (n) => `$${Math.round(n).toLocaleString()}`;
 const pct = (n) => `${(n * 100).toFixed(1)}%`;
@@ -1195,10 +1234,11 @@ function SidebarNav({ view, setView, profile }) {
 }
 
 function BottomNav({ view, setView }) {
+  const safeBottom = useSafeAreaBottom();
   return (
     <div className="show-mobile-nav" style={{
       position: "fixed", bottom: 0, left: 0, right: 0, background: `color-mix(in srgb, ${COLORS.bg} 85%, transparent)`, backdropFilter: "blur(10px)",
-      borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: "9px 6px calc(env(safe-area-inset-bottom,0px) + 4px)",
+      borderTop: `1px solid ${COLORS.line}`, display: "flex", justifyContent: "space-around", padding: `9px 6px ${safeBottom + 4}px`,
       zIndex: 50,
     }}>
       <style>{`@media (min-width: 900px) { .show-mobile-nav { display: none !important; } }`}</style>
@@ -2233,6 +2273,7 @@ function RowStat({ label, value, strong, color }) {
 
 function GlobalFab({ onClick }) {
   const [pressed, setPressed] = useState(false);
+  const safeBottom = useSafeAreaBottom();
   return (
     <>
       <style>{`@media (min-width: 900px) { .sb-fab { bottom: 26px !important; } }`}</style>
@@ -2244,7 +2285,7 @@ function GlobalFab({ onClick }) {
         aria-label="Quick action"
         className="sb-fab"
         style={{
-          position: "fixed", right: 18, bottom: "calc(84px + env(safe-area-inset-bottom, 0px))",
+          position: "fixed", right: 18, bottom: 84 + safeBottom,
           width: 56, height: 56, borderRadius: 999, border: "none", cursor: "pointer",
           background: `linear-gradient(135deg, ${COLORS.mocha}, ${COLORS.rose})`,
           display: "flex", alignItems: "center", justifyContent: "center",
